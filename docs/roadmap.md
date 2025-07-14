@@ -13,7 +13,7 @@ Build a Rust port of Hedgehog that preserves its core value proposition:
 ### Original Hedgehog
 - **Haskell Hedgehog**: https://github.com/hedgehogqa/haskell-hedgehog
 - **Website**: https://hedgehog.qa/
-- **Paper**: "Integrated Shrinking" by Jacob Stanley
+- **Key Talk**: "Gens N' Roses: Appetite for Reduction" by Jacob Stanley at YOW! Lambda Jam 2017
 - **Key modules**: `Hedgehog.Internal.Property`, `Hedgehog.Internal.Gen`, `Hedgehog.Internal.Tree`
 
 ### Other Language Ports

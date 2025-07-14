@@ -1,120 +1,103 @@
-<!--
-Apologies to those who are able to read this. Unfortunately, Hackage
-doesn't seem to render the HTML portion of the markdown spec so you may
-be better off paying us a visit on GitHub instead:
-https://github.com/hedgehogqa/haskell-hedgehog
+# Hedgehog for Rust
 
-https://preview.webflow.com/preview/hedgehogqa?utm_medium=preview_link&utm_source=dashboard&utm_content=hedgehogqa&preview=e42e956627c1ec686ee73fc48a20fb71&workflow=preview
--->
+> Release with confidence.
 
-<div align="center">
-
-<img width="400" src="https://github.com/hedgehogqa/haskell-hedgehog/raw/master/img/hedgehog-text-logo.png" />
-
-# Release with confidence.
-
-[![Hackage][hackage-shield]][hackage] [![GitHub CI][github-shield]][github-ci]
-
-<div align="left">
-
-[Hedgehog](http://hedgehog.qa/) automatically generates a comprehensive array of test cases, exercising your software in ways human testers would never imagine.
-
-Generate hundreds of test cases automatically, exposing even the most insidious of corner cases. Failures are automatically simplified, giving developers coherent, intelligible error messages.
+Property-based testing library for Rust, inspired by the original [Hedgehog](https://hedgehog.qa/) library for Haskell.
 
 ## Features
 
-- Integrated shrinking, shrinks obey invariants by construction.
-- Abstract state machine testing.
-- Generators allow monadic effects.
-- Range combinators for full control over the scope of generated numbers and collections.
-- Equality and roundtrip assertions show a diff instead of the two inequal values.
-- Template Haskell test runner which executes properties concurrently.
+- **Explicit generators** - No type-directed magic, generators are first-class values you compose
+- **Integrated shrinking** - Shrinks obey invariants by construction, built into generators
+- **Compositional** - Rich combinator library for building complex generators from simple ones
+- **Excellent debugging** - Minimal counterexamples with rich failure reporting
+- **Deterministic** - Reproducible test runs with seed-based generation
 
-## Example
+## Quick Start
 
-The main module, [Hedgehog][haddock-hedgehog], includes almost
-everything you need to get started writing property tests with Hedgehog.
+Add to your `Cargo.toml`:
 
-It is designed to be used alongside [Hedgehog.Gen][haddock-hedgehog-gen]
-and [Hedgehog.Range][haddock-hedgehog-range] which should be imported
-qualified. You also need to enable Template Haskell so the Hedgehog test
-runner can find your properties.
-
-
-```hs
-{-# LANGUAGE TemplateHaskell #-}
-
-import           Hedgehog
-import qualified Hedgehog.Gen as Gen
-import qualified Hedgehog.Range as Range
+```toml
+[dev-dependencies]
+hedgehog = "0.1"
 ```
 
-Once you have your imports set up, you can write a simple property:
+Write a property test:
 
-```hs
-prop_reverse :: Property
-prop_reverse =
-  property $ do
-    xs <- forAll $ Gen.list (Range.linear 0 100) Gen.alpha
-    reverse (reverse xs) === xs
+```rust
+use hedgehog::*;
+
+#[test]
+fn prop_reverse() {
+    let gen = Gen::range(1..=100).vec(0..=20);
+    let result = check(gen, Config::default(), |xs| {
+        let reversed: Vec<_> = xs.iter().rev().cloned().collect();
+        let double_reversed: Vec<_> = reversed.iter().rev().cloned().collect();
+        xs == double_reversed
+    });
+    assert!(matches!(result, TestResult::Pass));
+}
 ```
 
-And add the Template Haskell splice which will discover your properties:
+## Core Concepts
 
-```hs
-tests :: IO Bool
-tests =
-  checkParallel $$(discover)
+### Explicit Generators
+
+Unlike type-directed approaches, Hedgehog generators are explicit values you create and compose:
+
+```rust
+// Explicit generator construction
+let gen_small_int = Gen::range(1..=10);
+let gen_list = Gen::list(gen_small_int, 0..=5);
+let gen_pair = Gen::zip(gen_small_int, gen_list);
 ```
 
-If you prefer to avoid macros, you can specify the group of properties
-to run manually instead:
+### Integrated Shrinking
 
-```hs
-{-# LANGUAGE OverloadedStrings #-}
-
-tests :: IO Bool
-tests =
-  checkParallel $ Group "Test.Example" [
-      ("prop_reverse", prop_reverse)
-    ]
-```
-
-You can then load the module in GHCi, and run it:
+Shrinking is built into the generator, not separate. When a test fails, Hedgehog automatically finds the minimal counterexample:
 
 ```
-λ tests
-━━━ Test.Example ━━━
-  ✓ prop_reverse passed 100 tests.
+*** Failed! Falsifiable (after 13 tests and 5 shrinks):
+[1, 2]
+```
 
+### Compositional Design
+
+Build complex generators from simple ones using combinators:
+
+```rust
+let gen_person = zip3(
+    Gen::string(1..=20),           // name
+    Gen::range(0..=120),           // age  
+    Gen::string(5..=30),           // email
+).map(|(name, age, email)| Person { name, age, email });
 ```
 
 ## In Memory of Jacob Stanley
 
-As we come to the end of our guide to haskell-hedgehog, we'd like to take a moment to remember and honor one of its key contributors, our dear friend, author and co-founder, Jacob Stanley.
+This library is inspired by the original Hedgehog library for Haskell, created by Jacob Stanley and the Hedgehog team. Jacob was a remarkable mentor who had a profound influence on many in the functional programming community, including the author of this Rust port.
 
-Jacob's passion for Haskell and his commitment to creating high-quality, reliable software was truly inspiring. His work has shaped haskell-hedgehog in countless ways, and without him, it wouldn't be the project it is today.
+Jacob's vision of property-based testing with integrated shrinking revolutionized how we think about testing. His approach of making shrinking a first-class concern, built into the generator rather than bolted on afterwards, makes finding minimal counterexamples both automatic and reliable.
 
-Jacob passed away unexpectedly on April 9th. His absence is deeply felt, but his impact on this project, and on all of us who had the privilege to work with him, remains. We continue to maintain and develop haskell-hedgehog in his memory and in honor of his dedication to excellence in programming.
+His foundational talk "Gens N' Roses: Appetite for Reduction" at YOW! Lambda Jam 2017 explained the core insights behind integrated shrinking and continues to influence property-based testing libraries across many languages.
 
-As you explore haskell-hedgehog, and possibly contribute to its ongoing development, we invite you to join us in remembering Jacob Stanley — a tremendous developer, collaborator, and friend.
+Jacob passed away unexpectedly on April 9th, 2021. His absence is deeply felt, but his impact on property-based testing and the broader programming community remains. This Rust port aims to honor his memory by bringing his innovative approach to a new language and community.
 
-<div align="center">
-<br />
-<img width="307" src="https://github.com/hedgehogqa/haskell-hedgehog/raw/master/img/hedgehog-logo-grey.png" />
+**RIP, Jake.** Your mentorship and ideas live on.
 
-## Contributors
+## Project Status
 
-<a href="https://github.com/hedgehogqa/haskell-hedgehog/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=hedgehogqa/haskell-hedgehog" />
-</a>
+This is a work-in-progress implementation. See [docs/roadmap.md](docs/roadmap.md) for the development plan.
 
- [hackage]: http://hackage.haskell.org/package/hedgehog
- [hackage-shield]: https://img.shields.io/hackage/v/hedgehog.svg?style=flat
+## Contributing
 
- [github-shield]: https://github.com/hedgehogqa/haskell-hedgehog/actions/workflows/ci.yaml/badge.svg
- [github-ci]: https://github.com/hedgehogqa/haskell-hedgehog/actions/workflows/haskell-ci.yml
+Contributions are welcome! Please see the [roadmap](docs/roadmap.md) for planned features and current progress.
 
- [haddock-hedgehog]: http://hackage.haskell.org/package/hedgehog/docs/Hedgehog.html
- [haddock-hedgehog-gen]: http://hackage.haskell.org/package/hedgehog/docs/Hedgehog-Gen.html
- [haddock-hedgehog-range]: http://hackage.haskell.org/package/hedgehog/docs/Hedgehog-Range.html
+## License
+
+This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Jacob Stanley and the original Hedgehog team for the foundational ideas
+- The Haskell, F#, and R Hedgehog ports for implementation insights
+- The Rust community for excellent tooling and ecosystem support
