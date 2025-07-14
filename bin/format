@@ -1,0 +1,5 @@
+#!/bin/sh -eu
+
+# Format all code in the workspace
+
+cargo fmt --all

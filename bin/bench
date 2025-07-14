@@ -1,0 +1,5 @@
+#!/bin/sh -eu
+
+# Run benchmarks for the hedgehog workspace
+
+cargo bench --workspace

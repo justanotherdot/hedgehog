@@ -1,0 +1,15 @@
+[package]
+name = "hedgehog-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core functionality for Hedgehog property-based testing"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+rand.workspace = true
+thiserror.workspace = true

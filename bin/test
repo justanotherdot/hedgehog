@@ -1,0 +1,5 @@
+#!/bin/sh -eu
+
+# Run tests for the hedgehog workspace
+
+cargo test --workspace

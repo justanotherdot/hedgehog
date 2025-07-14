@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "hedgehog-core",
+    "hedgehog-derive", 
+    "hedgehog",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Ryan James Spencer <spencer.ryanjames@gmail.com>"]
+license = "BSD-3-Clause"
+repository = "https://github.com/hedgehogqa/rust-hedgehog"
+homepage = "https://hedgehog.qa"
+description = "Hedgehog property-based testing library for Rust"
+keywords = ["testing", "property", "quickcheck", "fuzzing"]
+categories = ["development-tools::testing"]
+
+[workspace.dependencies]
+# Core dependencies that multiple crates might need
+rand = "0.8"
+thiserror = "1.0"
+
+# Proc macro dependencies
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
