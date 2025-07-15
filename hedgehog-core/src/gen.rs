@@ -144,60 +144,231 @@ impl Gen<bool> {
     }
 }
 
-impl Gen<i32> {
-    /// Generate an integer in the given range.
-    pub fn int_range(min: i32, max: i32) -> Self {
-        Gen::new(move |_size, seed| {
-            let range = (max - min + 1) as u64;
-            let (value, _new_seed) = seed.next_bounded(range);
-            let result = min + value as i32;
+/// Macro to implement enhanced numeric generators with origin-based shrinking.
+macro_rules! impl_numeric_gen {
+    ($type:ty, $method:ident, $max_val:expr) => {
+        impl Gen<$type> {
+            /// Generate a number in the given range with enhanced shrinking.
+            pub fn $method(min: $type, max: $type) -> Self {
+                Gen::new(move |_size, seed| {
+                    let range = (max - min + 1) as u64;
+                    let (value, _new_seed) = seed.next_bounded(range);
+                    let result = min + value as $type;
 
-            // Enhanced shrinking: towards zero, binary search, and origin-based
+                    // Enhanced shrinking: towards zero, binary search, and origin-based
+                    let mut shrinks = Vec::new();
+
+                    // First, try shrinking towards the origin (closest valid value to 0)
+                    let origin = if min <= 0 && max >= 0 {
+                        0 // Zero is in range
+                    } else if min > 0 {
+                        min // Positive range, shrink towards minimum
+                    } else {
+                        max // Negative range, shrink towards maximum (closest to 0)
+                    };
+
+                    if origin != result {
+                        shrinks.push(Tree::singleton(origin));
+                    }
+
+                    // Binary search shrinking between result and origin
+                    let mut low = if result < origin { result } else { origin };
+                    let mut high = if result > origin { result } else { origin };
+
+                    while high - low > 1 {
+                        let mid = low + (high - low) / 2;
+                        if mid != result && mid >= min && mid <= max {
+                            shrinks.push(Tree::singleton(mid));
+                        }
+                        if result < origin {
+                            low = mid;
+                        } else {
+                            high = mid;
+                        }
+                    }
+
+                    // Traditional halving shrinks as fallback
+                    let mut current = result;
+                    for _ in 0..10 {
+                        // Limit iterations to prevent infinite loops
+                        current = if current > origin {
+                            current - (current - origin + 1) / 2
+                        } else if current < origin {
+                            current + (origin - current + 1) / 2
+                        } else {
+                            break;
+                        };
+
+                        if current != result && current >= min && current <= max {
+                            shrinks.push(Tree::singleton(current));
+                        }
+                    }
+
+                    Tree::with_children(result, shrinks)
+                })
+            }
+
+            /// Generate a positive number.
+            pub fn positive() -> Self {
+                Self::$method(1, $max_val)
+            }
+
+            /// Generate a natural number (including zero).
+            pub fn natural() -> Self {
+                Self::$method(0, $max_val)
+            }
+        }
+    };
+}
+
+// Implement for signed integers
+impl_numeric_gen!(i32, int_range, i32::MAX);
+impl_numeric_gen!(i64, i64_range, i64::MAX);
+
+// Implement for unsigned integers using specialized macro
+macro_rules! impl_unsigned_gen {
+    ($type:ty, $method:ident, $max_val:expr) => {
+        impl Gen<$type> {
+            /// Generate an unsigned number in the given range.
+            pub fn $method(min: $type, max: $type) -> Self {
+                Gen::new(move |_size, seed| {
+                    let range = (max - min + 1) as u64;
+                    let (value, _new_seed) = seed.next_bounded(range);
+                    let result = min + value as $type;
+
+                    // Enhanced shrinking for unsigned: towards zero (minimum)
+                    let mut shrinks = Vec::new();
+
+                    // For unsigned types, origin is always min (closest to 0)
+                    let origin = min;
+
+                    if origin != result {
+                        shrinks.push(Tree::singleton(origin));
+                    }
+
+                    // Binary search shrinking between result and origin
+                    let low = origin;
+                    let mut high = result;
+
+                    while high - low > 1 {
+                        let mid = low + (high - low) / 2;
+                        if mid != result && mid >= min && mid <= max {
+                            shrinks.push(Tree::singleton(mid));
+                        }
+                        high = mid;
+                    }
+
+                    // Traditional halving shrinks towards minimum
+                    let mut current = result;
+                    for _ in 0..10 {
+                        // Limit iterations to prevent infinite loops
+                        if current <= min {
+                            break;
+                        }
+                        current = min + (current - min) / 2;
+
+                        if current != result && current >= min && current <= max {
+                            shrinks.push(Tree::singleton(current));
+                        }
+                    }
+
+                    Tree::with_children(result, shrinks)
+                })
+            }
+
+            /// Generate a positive number.
+            pub fn positive() -> Self {
+                Self::$method(1, $max_val)
+            }
+
+            /// Generate a natural number (including zero).
+            pub fn natural() -> Self {
+                Self::$method(0, $max_val)
+            }
+        }
+    };
+}
+
+impl_unsigned_gen!(u32, u32_range, u32::MAX);
+
+// Range-based generator methods for better ergonomics
+impl Gen<i32> {
+    /// Generate integers using a Range specification.
+    pub fn from_range(range: crate::data::Range<i32>) -> Self {
+        Self::int_range(range.min, range.max)
+    }
+}
+
+impl Gen<i64> {
+    /// Generate i64 values using a Range specification.
+    pub fn from_range(range: crate::data::Range<i64>) -> Self {
+        Self::i64_range(range.min, range.max)
+    }
+}
+
+impl Gen<u32> {
+    /// Generate u32 values using a Range specification.
+    pub fn from_range(range: crate::data::Range<u32>) -> Self {
+        Self::u32_range(range.min, range.max)
+    }
+}
+
+impl Gen<f64> {
+    /// Generate f64 values using a Range specification.
+    pub fn from_range(range: crate::data::Range<f64>) -> Self {
+        Self::f64_range(range.min, range.max)
+    }
+}
+
+impl Gen<f64> {
+    /// Generate a f64 in the given range.
+    pub fn f64_range(min: f64, max: f64) -> Self {
+        Gen::new(move |_size, seed| {
+            let (value, _new_seed) = seed.next_u64();
+            // Convert u64 to [0, 1] range then scale to [min, max]
+            let normalized = (value as f64) / (u64::MAX as f64);
+            let result = min + normalized * (max - min);
+
+            // Enhanced shrinking for floats: towards zero or closest simple value
             let mut shrinks = Vec::new();
 
-            // First, try shrinking towards the origin (closest valid value to 0)
-            let origin = if min <= 0 && max >= 0 {
-                0 // Zero is in range
-            } else if min > 0 {
+            // Try common simple values that are in range
+            let simple_values = [0.0, 1.0, -1.0, 0.5, -0.5];
+            for &simple in &simple_values {
+                if simple >= min && simple <= max && simple != result {
+                    shrinks.push(Tree::singleton(simple));
+                }
+            }
+
+            // Try shrinking towards the origin (closest valid value to 0)
+            let origin = if min <= 0.0 && max >= 0.0 {
+                0.0 // Zero is in range
+            } else if min > 0.0 {
                 min // Positive range, shrink towards minimum
             } else {
                 max // Negative range, shrink towards maximum (closest to 0)
             };
 
-            if origin != result {
+            if origin != result && !shrinks.iter().any(|tree| tree.value == origin) {
                 shrinks.push(Tree::singleton(origin));
             }
 
-            // Binary search shrinking between result and origin
-            let mut low = if result < origin { result } else { origin };
-            let mut high = if result > origin { result } else { origin };
-
-            while high - low > 1 {
-                let mid = low + (high - low) / 2;
-                if mid != result && mid >= min && mid <= max {
-                    shrinks.push(Tree::singleton(mid));
-                }
-                if result < origin {
-                    low = mid;
-                } else {
-                    high = mid;
-                }
-            }
-
-            // Traditional halving shrinks as fallback
+            // Try halving the distance to origin
             let mut current = result;
-            for _ in 0..10 {
-                // Limit iterations to prevent infinite loops
-                current = if current > origin {
-                    current - (current - origin + 1) / 2
-                } else if current < origin {
-                    current + (origin - current + 1) / 2
-                } else {
-                    break;
-                };
-
+            for _ in 0..5 {
+                // Fewer iterations for floats
+                current = origin + (current - origin) * 0.5;
                 if current != result && current >= min && current <= max {
-                    shrinks.push(Tree::singleton(current));
+                    // Avoid duplicates
+                    if !shrinks
+                        .iter()
+                        .any(|tree| (tree.value - current).abs() < f64::EPSILON)
+                    {
+                        shrinks.push(Tree::singleton(current));
+                    }
+                }
+                if (current - origin).abs() < f64::EPSILON {
+                    break;
                 }
             }
 
@@ -205,14 +376,19 @@ impl Gen<i32> {
         })
     }
 
-    /// Generate a positive integer.
+    /// Generate a positive f64.
     pub fn positive() -> Self {
-        Self::int_range(1, i32::MAX)
+        Self::f64_range(f64::EPSILON, f64::MAX)
     }
 
-    /// Generate a natural number (including zero).
+    /// Generate a natural f64 (including zero).
     pub fn natural() -> Self {
-        Self::int_range(0, i32::MAX)
+        Self::f64_range(0.0, f64::MAX)
+    }
+
+    /// Generate a f64 in the unit interval [0, 1].
+    pub fn unit() -> Self {
+        Self::f64_range(0.0, 1.0)
     }
 }
 
@@ -852,6 +1028,60 @@ mod tests {
     }
 
     #[test]
+    fn test_numeric_types() {
+        // Test i64 generator
+        let i64_gen = Gen::i64_range(-100, 100);
+        let seed = Seed::from_u64(123);
+        let tree = i64_gen.generate(Size::new(50), seed);
+
+        assert!(
+            tree.value >= -100 && tree.value <= 100,
+            "i64 should be in range"
+        );
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "i64 should have shrinks");
+        assert!(
+            shrinks.contains(&&0),
+            "i64 should shrink towards origin (0)"
+        );
+
+        // Test u32 generator
+        let u32_gen = Gen::u32_range(10, 100);
+        let tree2 = u32_gen.generate(Size::new(50), seed);
+
+        assert!(
+            tree2.value >= 10 && tree2.value <= 100,
+            "u32 should be in range"
+        );
+        let shrinks2 = tree2.shrinks();
+        assert!(!shrinks2.is_empty(), "u32 should have shrinks");
+        assert!(
+            shrinks2.contains(&&10),
+            "u32 should shrink towards minimum (10)"
+        );
+
+        // Test f64 generator
+        let f64_gen = Gen::f64_range(-1.0, 1.0);
+        let tree3 = f64_gen.generate(Size::new(50), seed);
+
+        assert!(
+            tree3.value >= -1.0 && tree3.value <= 1.0,
+            "f64 should be in range"
+        );
+        let shrinks3 = tree3.shrinks();
+        assert!(!shrinks3.is_empty(), "f64 should have shrinks");
+
+        // Test f64 unit interval
+        let unit_gen = Gen::<f64>::unit();
+        let tree4 = unit_gen.generate(Size::new(50), seed);
+
+        assert!(
+            tree4.value >= 0.0 && tree4.value <= 1.0,
+            "f64 unit should be in [0,1]"
+        );
+    }
+
+    #[test]
     fn test_convenience_generators() {
         // Test Vec<i32> convenience method
         let vec_int_gen = Gen::<Vec<i32>>::vec_int();
@@ -877,5 +1107,46 @@ mod tests {
                 "Vec<bool> elements should be valid booleans"
             );
         }
+    }
+
+    #[test]
+    fn test_range_system() {
+        use crate::data::Range;
+
+        // Test Range creation and bounds checking
+        let range = Range::new(-10, 10).with_origin(0);
+        assert!(range.contains(&0));
+        assert!(range.contains(&-10));
+        assert!(range.contains(&10));
+        assert!(!range.contains(&11));
+        assert!(!range.contains(&-11));
+
+        // Test i32 range generator
+        let gen = Gen::<i32>::from_range(Range::<i32>::small_positive());
+        let seed = Seed::from_u64(789);
+        let tree = gen.generate(Size::new(50), seed);
+
+        assert!(
+            tree.value >= 1 && tree.value <= 100,
+            "Should be in small positive range"
+        );
+
+        // Test f64 range generator
+        let unit_gen = Gen::<f64>::from_range(Range::<f64>::unit());
+        let tree2 = unit_gen.generate(Size::new(50), seed);
+
+        assert!(
+            tree2.value >= 0.0 && tree2.value <= 1.0,
+            "Should be in unit range"
+        );
+
+        // Test predefined ranges
+        let positive_range = Range::<i32>::positive();
+        assert_eq!(positive_range.min, 1);
+        assert_eq!(positive_range.origin, Some(1));
+
+        let natural_range = Range::<i32>::natural();
+        assert_eq!(natural_range.min, 0);
+        assert_eq!(natural_range.origin, Some(0));
     }
 }

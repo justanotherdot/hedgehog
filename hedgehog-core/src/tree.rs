@@ -2,6 +2,8 @@
 
 use std::collections::VecDeque;
 
+pub mod render;
+
 /// A rose tree containing a value and its shrink possibilities.
 ///
 /// Trees are used to represent generated values along with their
@@ -139,6 +141,29 @@ impl<T> Tree<T> {
     pub fn has_shrinks(&self) -> bool {
         !self.children.is_empty()
     }
+
+    /// Count the total number of nodes in the tree.
+    pub fn count_nodes(&self) -> usize {
+        1 + self
+            .children
+            .iter()
+            .map(|child| child.count_nodes())
+            .sum::<usize>()
+    }
+
+    /// Get the depth of the tree.
+    pub fn depth(&self) -> usize {
+        if self.children.is_empty() {
+            1
+        } else {
+            1 + self
+                .children
+                .iter()
+                .map(|child| child.depth())
+                .max()
+                .unwrap_or(0)
+        }
+    }
 }
 
 impl<T> From<T> for Tree<T> {
@@ -187,5 +212,23 @@ mod tests {
         );
         let shrinks = tree.shrinks();
         assert_eq!(shrinks, vec![&5, &0, &2]);
+    }
+
+    #[test]
+    fn test_tree_metrics() {
+        let tree = Tree::with_children(
+            10,
+            vec![
+                Tree::with_children(5, vec![Tree::singleton(2)]),
+                Tree::singleton(0),
+            ],
+        );
+
+        assert_eq!(tree.count_nodes(), 4); // 10, 5, 2, 0
+        assert_eq!(tree.depth(), 3); // 10 -> 5 -> 2
+
+        let singleton = Tree::singleton(42);
+        assert_eq!(singleton.count_nodes(), 1);
+        assert_eq!(singleton.depth(), 1);
     }
 }

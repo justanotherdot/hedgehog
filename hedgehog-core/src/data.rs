@@ -170,3 +170,102 @@ fn mix_gamma(mut z: u64) -> u64 {
     // Ensure gamma is odd for maximal period
     (z | 1).wrapping_mul(0x9e3779b97f4a7c15)
 }
+
+/// A range for generating numeric values with enhanced shrinking.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Range<T> {
+    /// Lower bound (inclusive).
+    pub min: T,
+    /// Upper bound (inclusive).
+    pub max: T,
+    /// Origin point for shrinking (usually zero or closest valid value).
+    pub origin: Option<T>,
+}
+
+impl<T> Range<T>
+where
+    T: Copy + PartialOrd,
+{
+    /// Create a new range with the given bounds.
+    pub fn new(min: T, max: T) -> Self {
+        Range {
+            min,
+            max,
+            origin: None,
+        }
+    }
+
+    /// Set the origin point for shrinking.
+    pub fn with_origin(mut self, origin: T) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+
+    /// Check if a value is within this range.
+    pub fn contains(&self, value: &T) -> bool {
+        value >= &self.min && value <= &self.max
+    }
+}
+
+impl Range<i32> {
+    /// Create a positive range [1, i32::MAX].
+    pub fn positive() -> Self {
+        Range::new(1, i32::MAX).with_origin(1)
+    }
+
+    /// Create a natural range [0, i32::MAX].
+    pub fn natural() -> Self {
+        Range::new(0, i32::MAX).with_origin(0)
+    }
+
+    /// Create a small positive range [1, 100].
+    pub fn small_positive() -> Self {
+        Range::new(1, 100).with_origin(1)
+    }
+}
+
+impl Range<i64> {
+    /// Create a positive range [1, i64::MAX].
+    pub fn positive() -> Self {
+        Range::new(1, i64::MAX).with_origin(1)
+    }
+
+    /// Create a natural range [0, i64::MAX].
+    pub fn natural() -> Self {
+        Range::new(0, i64::MAX).with_origin(0)
+    }
+}
+
+impl Range<u32> {
+    /// Create a positive range [1, u32::MAX].
+    pub fn positive() -> Self {
+        Range::new(1, u32::MAX).with_origin(1)
+    }
+
+    /// Create a natural range [0, u32::MAX].
+    pub fn natural() -> Self {
+        Range::new(0, u32::MAX).with_origin(0)
+    }
+}
+
+impl Range<f64> {
+    /// Create a unit range [0.0, 1.0].
+    pub fn unit() -> Self {
+        Range::new(0.0, 1.0).with_origin(0.0)
+    }
+
+    /// Create a positive range [f64::EPSILON, f64::MAX].
+    pub fn positive() -> Self {
+        Range::new(f64::EPSILON, f64::MAX).with_origin(f64::EPSILON)
+    }
+
+    /// Create a natural range [0.0, f64::MAX].
+    pub fn natural() -> Self {
+        Range::new(0.0, f64::MAX).with_origin(0.0)
+    }
+
+    /// Create a standard normal-like range [-3.0, 3.0].
+    pub fn normal() -> Self {
+        Range::new(-3.0, 3.0).with_origin(0.0)
+    }
+}
