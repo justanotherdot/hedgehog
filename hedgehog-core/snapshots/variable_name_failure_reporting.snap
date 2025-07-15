@@ -1,0 +1,11 @@
+━━━ hedgehog_core::property::tests ━━━
+  ✗ snapshot_variable_name_reporting failed after 1 tests and 3 shrinks.
+
+    Shrinking progression:
+      │ forAll 0 = 20 -- n
+      │ forAll 1 = 10 -- n
+      │ forAll 2 = 5 -- n
+      │ forAll 3 = 7 -- n
+
+    === Boolean Condition ===
+    Minimal counterexample: 7

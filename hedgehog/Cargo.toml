@@ -21,3 +21,11 @@ hedgehog-derive = { path = "../hedgehog-derive", optional = true }
 [[example]]
 name = "basic"
 path = "../examples/basic.rs"
+
+[[example]]
+name = "distribution_shaping"
+path = "../examples/distribution_shaping.rs"
+
+[[example]]
+name = "variable_name_tracking"
+path = "../examples/variable_name_tracking.rs"

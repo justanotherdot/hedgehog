@@ -2,6 +2,21 @@
 
 use crate::{data::*, tree::*};
 
+/// A weighted choice for frequency-based generation.
+pub struct WeightedChoice<T> {
+    /// The weight of this choice (higher weights are more likely).
+    pub weight: u64,
+    /// The generator for this choice.
+    pub generator: Gen<T>,
+}
+
+impl<T> WeightedChoice<T> {
+    /// Create a new weighted choice.
+    pub fn new(weight: u64, generator: Gen<T>) -> Self {
+        WeightedChoice { weight, generator }
+    }
+}
+
 /// Simplify a character towards simpler forms for shrinking.
 fn simplify_char(ch: char) -> char {
     match ch {
@@ -130,6 +145,58 @@ where
             tree.filter(&predicate)
                 .unwrap_or_else(|| Tree::singleton(value))
         })
+    }
+
+    /// Generate values using weighted frequency distribution.
+    ///
+    /// This is similar to QuickCheck's `frequency` and Haskell Hedgehog's weighted choice.
+    /// Higher weights make choices more likely to be selected.
+    pub fn frequency(choices: Vec<WeightedChoice<T>>) -> Gen<T>
+    where
+        T: Clone,
+    {
+        if choices.is_empty() {
+            panic!("frequency: empty choices list");
+        }
+
+        // Calculate total weight
+        let total_weight: u64 = choices.iter().map(|c| c.weight).sum();
+
+        if total_weight == 0 {
+            panic!("frequency: total weight is zero");
+        }
+
+        Gen::new(move |size, seed| {
+            let (choice_value, new_seed) = seed.next_bounded(total_weight);
+
+            // Find the chosen generator based on cumulative weights
+            let mut cumulative_weight = 0;
+            let mut chosen_generator = &choices[0].generator;
+
+            for choice in &choices {
+                cumulative_weight += choice.weight;
+                if choice_value < cumulative_weight {
+                    chosen_generator = &choice.generator;
+                    break;
+                }
+            }
+
+            chosen_generator.generate(size, new_seed)
+        })
+    }
+
+    /// Generate values using one of the given generators with equal probability.
+    ///
+    /// This is equivalent to `frequency` with all weights equal to 1.
+    pub fn one_of(generators: Vec<Gen<T>>) -> Gen<T>
+    where
+        T: Clone,
+    {
+        let choices = generators
+            .into_iter()
+            .map(|gen| WeightedChoice::new(1, gen))
+            .collect();
+        Gen::frequency(choices)
     }
 }
 
@@ -291,89 +358,134 @@ macro_rules! impl_unsigned_gen {
 
 impl_unsigned_gen!(u32, u32_range, u32::MAX);
 
-// Range-based generator methods for better ergonomics
+// Enhanced range-based generators with distribution support
 impl Gen<i32> {
-    /// Generate integers using a Range specification.
+    /// Generate integers using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<i32>) -> Self {
-        Self::int_range(range.min, range.max)
-    }
-}
-
-impl Gen<i64> {
-    /// Generate i64 values using a Range specification.
-    pub fn from_range(range: crate::data::Range<i64>) -> Self {
-        Self::i64_range(range.min, range.max)
-    }
-}
-
-impl Gen<u32> {
-    /// Generate u32 values using a Range specification.
-    pub fn from_range(range: crate::data::Range<u32>) -> Self {
-        Self::u32_range(range.min, range.max)
-    }
-}
-
-impl Gen<f64> {
-    /// Generate f64 values using a Range specification.
-    pub fn from_range(range: crate::data::Range<f64>) -> Self {
-        Self::f64_range(range.min, range.max)
-    }
-}
-
-impl Gen<f64> {
-    /// Generate a f64 in the given range.
-    pub fn f64_range(min: f64, max: f64) -> Self {
         Gen::new(move |_size, seed| {
-            let (value, _new_seed) = seed.next_u64();
-            // Convert u64 to [0, 1] range then scale to [min, max]
-            let normalized = (value as f64) / (u64::MAX as f64);
-            let result = min + normalized * (max - min);
+            let range_size = (range.max - range.min + 1) as u64;
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min + offset as i32;
 
-            // Enhanced shrinking for floats: towards zero or closest simple value
+            // Enhanced shrinking: towards origin, binary search, and traditional halving
             let mut shrinks = Vec::new();
 
-            // Try common simple values that are in range
-            let simple_values = [0.0, 1.0, -1.0, 0.5, -0.5];
-            for &simple in &simple_values {
-                if simple >= min && simple <= max && simple != result {
-                    shrinks.push(Tree::singleton(simple));
+            // Determine the origin for shrinking
+            let origin = range.origin.unwrap_or_else(|| {
+                if range.min <= 0 && range.max >= 0 {
+                    0 // Zero is in range
+                } else if range.min > 0 {
+                    range.min // Positive range, shrink towards minimum
+                } else {
+                    range.max // Negative range, shrink towards maximum (closest to 0)
                 }
-            }
+            });
 
-            // Try shrinking towards the origin (closest valid value to 0)
-            let origin = if min <= 0.0 && max >= 0.0 {
-                0.0 // Zero is in range
-            } else if min > 0.0 {
-                min // Positive range, shrink towards minimum
-            } else {
-                max // Negative range, shrink towards maximum (closest to 0)
-            };
-
-            if origin != result && !shrinks.iter().any(|tree| tree.value == origin) {
+            if origin != result {
                 shrinks.push(Tree::singleton(origin));
             }
 
-            // Try halving the distance to origin
-            let mut current = result;
-            for _ in 0..5 {
-                // Fewer iterations for floats
-                current = origin + (current - origin) * 0.5;
-                if current != result && current >= min && current <= max {
-                    // Avoid duplicates
-                    if !shrinks
-                        .iter()
-                        .any(|tree| (tree.value - current).abs() < f64::EPSILON)
-                    {
-                        shrinks.push(Tree::singleton(current));
-                    }
+            // Binary search shrinking between result and origin
+            let mut low = result.min(origin);
+            let mut high = result.max(origin);
+
+            while high - low > 1 {
+                let mid = low + (high - low) / 2;
+                if mid != result && mid >= range.min && mid <= range.max {
+                    shrinks.push(Tree::singleton(mid));
                 }
-                if (current - origin).abs() < f64::EPSILON {
-                    break;
+                if result < origin {
+                    low = mid;
+                } else {
+                    high = mid;
                 }
             }
 
             Tree::with_children(result, shrinks)
         })
+    }
+}
+
+impl Gen<i64> {
+    /// Generate i64 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<i64>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = (range.max - range.min + 1) as u64;
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min + offset as i64;
+
+            // Enhanced shrinking similar to i32
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or_else(|| {
+                if range.min <= 0 && range.max >= 0 {
+                    0
+                } else if range.min > 0 {
+                    range.min
+                } else {
+                    range.max
+                }
+            });
+
+            if origin != result {
+                shrinks.push(Tree::singleton(origin));
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
+impl Gen<u32> {
+    /// Generate u32 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<u32>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = (range.max - range.min + 1) as u64;
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min + offset as u32;
+
+            // Enhanced shrinking for unsigned: towards minimum
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or(range.min);
+
+            if origin != result {
+                shrinks.push(Tree::singleton(origin));
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
+impl Gen<f64> {
+    /// Generate f64 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<f64>) -> Self {
+        Gen::new(move |_size, seed| {
+            let (normalized, _new_seed) = range.distribution.sample_f64(seed);
+            let result = range.min + normalized * (range.max - range.min);
+
+            // Enhanced shrinking for floats: towards origin and simple values
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or(0.0);
+
+            if origin >= range.min && origin <= range.max && origin != result {
+                shrinks.push(Tree::singleton(origin));
+            }
+
+            // Try common simple values that are in range
+            let simple_values = [0.0, 1.0, -1.0, 0.5, -0.5];
+            for &simple in &simple_values {
+                if simple >= range.min && simple <= range.max && simple != result {
+                    shrinks.push(Tree::singleton(simple));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+
+    /// Generate a f64 in the given range (convenience method).
+    pub fn f64_range(min: f64, max: f64) -> Self {
+        Gen::<f64>::from_range(crate::data::Range::new(min, max))
     }
 
     /// Generate a positive f64.
@@ -542,6 +654,105 @@ impl Gen<String> {
     /// Generate printable ASCII strings.
     pub fn ascii_printable() -> Self {
         Self::string_of(Gen::<char>::ascii_printable())
+    }
+
+    /// Generate strings with controlled length using a Range specification.
+    pub fn with_range(length_range: crate::data::Range<usize>, char_gen: Gen<char>) -> Self {
+        Gen::new(move |size, seed| {
+            let (len_seed, chars_seed) = seed.split();
+
+            // Use the range distribution to determine length
+            let range_size = (length_range.max - length_range.min + 1) as u64;
+            let (offset, _) = length_range.distribution.sample_u64(len_seed, range_size);
+            let length = length_range.min + offset as usize;
+
+            let mut current_seed = chars_seed;
+            let mut chars = Vec::new();
+            let mut char_trees = Vec::new();
+
+            for _ in 0..length {
+                let (char_seed, next_seed) = current_seed.split();
+                current_seed = next_seed;
+
+                let char_tree = char_gen.generate(size, char_seed);
+                chars.push(char_tree.value);
+                char_trees.push(char_tree);
+            }
+
+            let string_value: String = chars.iter().collect();
+
+            // Enhanced shrinking: try origin length first, then character removal
+            let mut shrinks = Vec::new();
+
+            // Try shrinking to origin length if different from current length
+            let origin_length = length_range.origin.unwrap_or(length_range.min);
+            if origin_length != length
+                && origin_length >= length_range.min
+                && origin_length <= length_range.max
+            {
+                if origin_length == 0 {
+                    shrinks.push(Tree::singleton(String::new()));
+                } else if origin_length < length {
+                    let origin_string: String = chars[..origin_length].iter().collect();
+                    shrinks.push(Tree::singleton(origin_string));
+                }
+            }
+
+            // Always try empty string as ultimate shrink
+            if !chars.is_empty() && length_range.min == 0 {
+                shrinks.push(Tree::singleton(String::new()));
+            }
+
+            // Character removal shrinking
+            if !chars.is_empty() {
+                // Remove last character
+                let shorter: String = chars[..chars.len() - 1].iter().collect();
+                shrinks.push(Tree::singleton(shorter));
+
+                // Remove first character
+                if chars.len() > 1 {
+                    let shorter: String = chars[1..].iter().collect();
+                    shrinks.push(Tree::singleton(shorter));
+                }
+            }
+
+            // Character simplification (replace with 'a')
+            if !chars.is_empty() {
+                let mut simplified_chars = chars.clone();
+                let mut did_simplify = false;
+
+                for ch in simplified_chars.iter_mut() {
+                    let simplified = simplify_char(*ch);
+                    if simplified != *ch {
+                        *ch = simplified;
+                        did_simplify = true;
+                        break; // Only simplify one character at a time
+                    }
+                }
+
+                if did_simplify {
+                    let simplified_string: String = simplified_chars.iter().collect();
+                    shrinks.push(Tree::singleton(simplified_string));
+                }
+            }
+
+            Tree::with_children(string_value, shrinks)
+        })
+    }
+
+    /// Generate ASCII alphabetic strings with controlled length.
+    pub fn alpha_with_range(length_range: crate::data::Range<usize>) -> Self {
+        Self::with_range(length_range, Gen::<char>::ascii_alpha())
+    }
+
+    /// Generate ASCII alphanumeric strings with controlled length.
+    pub fn alphanumeric_with_range(length_range: crate::data::Range<usize>) -> Self {
+        Self::with_range(length_range, Gen::<char>::ascii_alphanumeric())
+    }
+
+    /// Generate printable ASCII strings with controlled length.
+    pub fn printable_with_range(length_range: crate::data::Range<usize>) -> Self {
+        Self::with_range(length_range, Gen::<char>::ascii_printable())
     }
 }
 
@@ -1148,5 +1359,96 @@ mod tests {
         let natural_range = Range::<i32>::natural();
         assert_eq!(natural_range.min, 0);
         assert_eq!(natural_range.origin, Some(0));
+    }
+
+    #[test]
+    fn test_frequency_generator() {
+        let gen = Gen::frequency(vec![
+            WeightedChoice::new(1, Gen::constant(0)),       // 10% zeros
+            WeightedChoice::new(9, Gen::int_range(1, 100)), // 90% positive
+        ]);
+
+        let tree = gen.generate(Size::new(10), Seed::from_u64(42));
+
+        // Should generate a valid value
+        assert!(tree.value >= 0 && tree.value <= 100);
+    }
+
+    #[test]
+    fn test_range_distributions() {
+        // Test uniform distribution
+        let uniform_gen = Gen::<i32>::from_range(crate::data::Range::new(1, 10));
+        let uniform_tree = uniform_gen.generate(Size::new(10), Seed::from_u64(42));
+        assert!(uniform_tree.value >= 1 && uniform_tree.value <= 10);
+
+        // Test linear distribution (favors smaller values)
+        let linear_gen = Gen::<i32>::from_range(crate::data::Range::linear(1, 100));
+        let linear_tree = linear_gen.generate(Size::new(10), Seed::from_u64(42));
+        assert!(linear_tree.value >= 1 && linear_tree.value <= 100);
+
+        // Test exponential distribution (strongly favors smaller values)
+        let exponential_gen = Gen::<i32>::from_range(crate::data::Range::exponential(1, 1000));
+        let exponential_tree = exponential_gen.generate(Size::new(10), Seed::from_u64(42));
+        assert!(exponential_tree.value >= 1 && exponential_tree.value <= 1000);
+
+        // Test constant distribution
+        let constant_gen = Gen::<i32>::from_range(crate::data::Range::constant(42));
+        let constant_tree = constant_gen.generate(Size::new(10), Seed::from_u64(42));
+        assert_eq!(constant_tree.value, 42);
+    }
+
+    #[test]
+    fn test_with_range() {
+        // Test string with controlled length
+        let string_gen = Gen::<String>::alpha_with_range(crate::data::Range::new(5, 10));
+        let string_tree = string_gen.generate(Size::new(10), Seed::from_u64(42));
+
+        assert!(string_tree.value.len() >= 5 && string_tree.value.len() <= 10);
+        assert!(string_tree.value.chars().all(|c| c.is_ascii_alphabetic()));
+
+        // Test string with linear distribution (favors shorter strings)
+        let linear_string_gen = Gen::<String>::alpha_with_range(crate::data::Range::linear(1, 20));
+        let linear_string_tree = linear_string_gen.generate(Size::new(10), Seed::from_u64(42));
+
+        assert!(linear_string_tree.value.len() >= 1 && linear_string_tree.value.len() <= 20);
+        assert!(linear_string_tree
+            .value
+            .chars()
+            .all(|c| c.is_ascii_alphabetic()));
+    }
+
+    #[test]
+    fn test_one_of_generator() {
+        let gen = Gen::one_of(vec![
+            Gen::constant("hello"),
+            Gen::constant("world"),
+            Gen::constant("test"),
+        ]);
+
+        let tree = gen.generate(Size::new(10), Seed::from_u64(42));
+
+        // Should generate one of the three values
+        assert!(tree.value == "hello" || tree.value == "world" || tree.value == "test");
+    }
+
+    #[test]
+    fn test_distribution_behavior() {
+        let seed = Seed::from_u64(42);
+
+        // Test uniform distribution
+        let (uniform_val, _) = Distribution::Uniform.sample_u64(seed, 100);
+        assert!(uniform_val < 100);
+
+        // Test linear distribution
+        let (linear_val, _) = Distribution::Linear.sample_u64(seed, 100);
+        assert!(linear_val < 100);
+
+        // Test exponential distribution
+        let (exp_val, _) = Distribution::Exponential.sample_u64(seed, 100);
+        assert!(exp_val < 100);
+
+        // Test constant distribution
+        let (const_val, _) = Distribution::Constant.sample_u64(seed, 100);
+        assert_eq!(const_val, 0);
     }
 }
