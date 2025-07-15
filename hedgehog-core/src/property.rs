@@ -163,4 +163,20 @@ mod tests {
             other => panic!("Expected failure, got: {:?}", other),
         }
     }
+
+    #[test]
+    fn test_boolean_generator_reliability() {
+        // Test that boolean generator with SplitMix64 produces both true and false
+        let gen = Gen::bool();
+        let prop = for_all(gen, |&b| b == true); // Will fail on false
+        let config = Config::default().with_tests(50);
+
+        match prop.run(&config) {
+            TestResult::Fail { .. } => (), // Expected - should find false values
+            other => panic!(
+                "Boolean generator should produce both true and false, got: {:?}",
+                other
+            ),
+        }
+    }
 }
