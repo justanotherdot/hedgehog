@@ -298,6 +298,150 @@ Based on analysis of existing ports and Rust's constraints:
 - **Compatibility**: Extensive testing with existing codebases
 - **Maintenance**: Clear documentation and contributor guidelines
 
+## Known Issues and Improvements
+
+### Tree Rendering and Debugging Output
+
+**Current limitation**: Our tree rendering differs significantly from Haskell Hedgehog's debugging experience:
+
+**Haskell Hedgehog shows the shrinking *process***:
+```
+✗ reverse involutive failed at size 2 after 1 test and 2 shrinks.
+
+      ┏━━ test/Test.hs ━━━
+   20 ┃ prop_reverse_involutive :: Property
+   21 ┃ prop_reverse_involutive = property $ do
+   22 ┃   xs <- forAll $ Gen.list (Range.linear 0 100) Gen.alpha
+   23 ┃   reverse (reverse xs) === xs
+      ┃   │ forAll 0 = "ab"
+      ┃   │ forAll 1 = "a"    -- shrink step 1
+      ┃   │ forAll 2 = ""     -- shrink step 2 (minimal)
+```
+
+**Our implementation shows shrinking *possibilities***:
+- Static tree visualization showing all potential shrinks
+- No integration with property failure output
+- Missing step-by-step progression and source location info
+
+**Missing features**:
+1. **Integrated failure reporting** - `TestResult::Fail` should show shrinking steps
+2. **Step functionality** - Ability to walk through shrinks one by one like `--hedgehog-shrinks N`
+3. **Rich annotations** - Show variable names and progression 
+4. **Better tree traversal** - Show the path taken during shrinking, not just all possibilities
+5. **Display trait limitations** - Tree rendering only works for `T: Display`, not `T: Debug`
+
+**Priority**: High - This significantly impacts the debugging experience
+
+### String Generator Issues
+
+**Current limitation**: String generator can produce unexpected results due to size-dependent length:
+
+```rust
+let (length, _) = len_seed.next_bounded(size.get() as u64 + 1);
+```
+
+With `Size::new(4)`, possible lengths are 0-4. Certain seeds produce empty strings even when non-empty strings are expected.
+
+**Issues**:
+1. **Unpredictable length distribution** - Size-dependent randomness may not match user expectations
+2. **Empty string frequency** - Higher than expected for small sizes
+3. **No minimum length control** - Cannot specify "at least N characters"
+
+**Root cause**: We conflate Size (generation complexity) with Range (value bounds), unlike Haskell Hedgehog which separates these concerns.
+
+**Haskell Hedgehog approach**:
+```haskell
+Gen.string (Range.linear 0 100) Gen.alpha     -- Uniform 0-100 length
+Gen.string (Range.exponential 1 100) Gen.alpha -- Bias towards shorter
+Gen.string (Range.constant 5) Gen.alpha        -- Always length 5
+```
+
+**Erlang PropEr distribution shaping**:
+```erlang
+?LET(N, weighted_union([{10, 0}, {90, range(1, 100)}]),
+     vector(N, char()))  % 10% empty, 90% non-empty
+```
+
+**Potential solutions**:
+1. **Range-based string generation** - `Gen::<String>::with_range(Range::linear(1, 10), Gen::ascii_alpha())`
+2. **Distribution shaping** - `Gen::<String>::weighted_length([{10, 0}, {90, range(1, 20)}])`
+3. **Separate size and range** - Size affects recursion depth, Range controls length distribution
+4. **Convenience methods** - `Gen::<String>::non_empty_alpha()`, `Gen::<String>::short_alpha()`
+
+**Priority**: Medium - Affects usability but has workarounds. Should implement proper Range system first.
+
+### Display vs Debug Rendering
+
+**Current limitation**: Tree rendering methods require `T: std::fmt::Display` but many types only implement `Debug`:
+
+```rust
+impl<T> Tree<T> where T: std::fmt::Display {
+    pub fn render(&self) -> String { ... }
+}
+```
+
+This prevents rendering for `Vec<T>`, `Option<T>`, and most custom types.
+
+**Potential solutions**:
+1. **Debug-based rendering methods** - Additional methods using `Debug` formatting
+2. **Generic formatting trait** - Accept either `Display` or `Debug`  
+3. **Separate rendering traits** - More flexible approach
+
+**Priority**: Medium - Good for developer experience
+
+### Distribution Shaping and Weighted Generation
+
+**Current limitation**: We lack sophisticated distribution control found in mature property testing libraries.
+
+**Haskell Hedgehog has Range combinators**:
+```haskell
+Range.linear 0 100        -- Uniform distribution
+Range.exponential 1 1000  -- Exponential bias towards smaller values  
+Range.singleton 42        -- Always generates 42
+Range.constantFrom 10 5 20 -- Around 10, between 5-20
+```
+
+**Erlang PropEr has weighted unions**:
+```erlang
+weighted_union([{1, atom()}, {9, integer()}])  % 10% atoms, 90% integers
+frequency([{10, small_int()}, {1, large_int()}]) % Bias towards small ints
+```
+
+**QuickCheck has frequency and oneof**:
+```haskell
+frequency [(1, return 0), (9, choose (1, 100))]  -- 10% zeros, 90% positive
+```
+
+**Missing in our implementation**:
+1. **Weighted choice generators** - `Gen::frequency([(weight, gen), ...])`
+2. **Range combinators** - Linear, exponential, constant distributions  
+3. **Biased generation** - Easy ways to create realistic distributions
+4. **Size-sensitive scaling** - Ranges that grow with test complexity
+
+**Potential API design**:
+```rust
+// Weighted choice
+Gen::frequency([
+    (1, Gen::constant(0)),           // 10% zeros
+    (9, Gen::int_range(1, 100))      // 90% positive
+])
+
+// Range-based generation  
+Gen::int_with_range(Range::exponential(1, 1000))
+Gen::string_with_range(Range::linear(0, 50), Gen::ascii_alpha())
+
+// Size-sensitive ranges
+Gen::list_with_range(Range::linear(0, size.get()), Gen::int_range(1, 100))
+```
+
+**Benefits**:
+- **Realistic test data** - Model real-world distributions
+- **Edge case control** - Tune frequency of boundary conditions
+- **Performance** - Avoid generating overly large test cases
+- **User expectations** - Match intuitive behavior (e.g., mostly non-empty strings)
+
+**Priority**: High - Essential for production-quality property testing
+
 ## Future Considerations
 
 ### Date/Time Generators (Maybe)

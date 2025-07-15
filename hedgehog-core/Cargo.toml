@@ -21,3 +21,7 @@ path = "../examples/generators.rs"
 [[example]]
 name = "shrinking"
 path = "../examples/shrinking.rs"
+
+[[example]]
+name = "tree-output"
+path = "../examples/tree_output.rs"
