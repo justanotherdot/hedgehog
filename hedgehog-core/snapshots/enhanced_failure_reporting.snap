@@ -1,0 +1,11 @@
+━━━ hedgehog_core::property::tests ━━━
+  ✗ snapshot_failure_reporting failed after 1 tests and 3 shrinks.
+
+    Shrinking progression:
+      │ Original: 20
+      │ Step 1: 10
+      │ Step 2: 5
+      │ Step 3: 7
+
+    === Boolean Condition ===
+    Minimal counterexample: 7
