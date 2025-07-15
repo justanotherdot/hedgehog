@@ -268,12 +268,12 @@ pub fn run_property_tests() {
     // Custom reporting
     for (name, result) in results {
         match result {
-            TestResult::Pass => println!("✓ {}", name),
+            TestResult::Pass => println!("PASS: {}", name),
             TestResult::Fail(report) => {
-                println!("✗ {}", name);
+                println!("FAIL: {}", name);
                 println!("{}", report);
             },
-            TestResult::Discard => println!("? {} (too many discards)", name),
+            TestResult::Discard => println!("DISCARD: {} (too many discards)", name),
         }
     }
 }
