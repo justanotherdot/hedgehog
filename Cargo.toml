@@ -3,6 +3,7 @@ members = [
     "hedgehog-core",
     "hedgehog-derive", 
     "hedgehog",
+    "hedgehog-cli",
 ]
 resolver = "2"
 

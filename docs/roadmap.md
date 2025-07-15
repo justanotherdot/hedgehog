@@ -28,7 +28,7 @@
 - **Attribute Customization** for derive macros
 - **Generic Type Support** in derive macros
 - **State Machine Testing** utilities
-- **Parallel Property Testing**
+- **Regression Writing** - save failing cases to files for deterministic replay
 - **Custom RNG Support**
 
 ## Non-Goals

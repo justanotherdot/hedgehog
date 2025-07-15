@@ -1,0 +1,8 @@
+Generate test report
+
+Usage: cargo hedgehog report [OPTIONS]
+
+Options:
+  -f, --format <FORMAT>  Output format (json, markdown, html) [default: markdown]
+  -o, --output <OUTPUT>  Output file (default: stdout)
+  -h, --help             Print help
