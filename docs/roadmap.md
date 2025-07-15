@@ -300,6 +300,27 @@ Based on analysis of existing ports and Rust's constraints:
 
 ## Future Considerations
 
+### Date/Time Generators (Maybe)
+
+Following the Haskell Hedgehog approach, date/time generators are not part of core but could be a separate extension crate.
+
+**Potential approach for `hedgehog-time` crate:**
+- Unix epoch-based shrinking (towards 1970-01-01 instead of 0)
+- Support for `SystemTime`, `Duration`, and potentially `chrono` types
+- Meaningful temporal origins (e.g., year 2000, current date)
+- Timezone-aware shrinking strategies
+
+**Benefits of epoch-based shrinking:**
+- Avoids invalid dates from shrinking towards 0
+- Provides realistic minimal counterexamples
+- Maintains temporal meaning in failed test cases
+
+**Implementation considerations:**
+- Keep separate from core to avoid dependencies
+- Allow custom temporal origins for domain-specific testing
+- Support both absolute times and durations
+- Consider leap years, timezone complexities
+
 ### Configurable Random Number Generators
 
 Currently, Hedgehog uses a hardcoded SplitMix64 PRNG, which provides excellent quality for property testing and matches the choice made by Haskell Hedgehog. However, users may eventually want to configure the RNG algorithm.

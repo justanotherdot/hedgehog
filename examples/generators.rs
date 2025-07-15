@@ -110,6 +110,55 @@ fn main() {
         ),
     }
 
+    // Test Result generators
+    println!("Testing Result generators");
+    let result_gen = Gen::<std::result::Result<i32, String>>::result_of(
+        Gen::int_range(1, 100),
+        Gen::<String>::ascii_alpha(),
+    );
+    let result_prop = for_all(result_gen, |r: &std::result::Result<i32, String>| match r {
+        Ok(n) => *n >= 1 && *n <= 100,
+        Err(s) => s.chars().all(|c| c.is_ascii_alphabetic()),
+    });
+    match result_prop.run(&Config::default().with_tests(50)) {
+        TestResult::Pass => println!("Result<i32, String> property passed"),
+        result => println!("Result<i32, String> property failed: {:?}", result),
+    }
+
+    // Test that Result generators produce both Ok and Err
+    println!("Testing Result distribution");
+    let result_test_gen =
+        Gen::<std::result::Result<bool, i32>>::result_of(Gen::bool(), Gen::int_range(-10, 10));
+    let result_ok_prop = for_all(result_test_gen, |r: &std::result::Result<bool, i32>| {
+        r.is_ok() // This should fail, proving we get Err values
+    });
+    match result_ok_prop.run(&Config::default().with_tests(100)) {
+        TestResult::Fail { .. } => println!("Result produces Err values (expected failure)"),
+        TestResult::Pass => println!("WARNING: Result generator only produced Ok values"),
+        result => println!("Unexpected result: {:?}", result),
+    }
+
+    // Test weighted Result generator
+    println!("Testing weighted Result generator");
+    let weighted_result_gen = Gen::<std::result::Result<i32, String>>::result_of_weighted(
+        Gen::int_range(1, 10),
+        Gen::<String>::ascii_alpha(),
+        9, // 90% Ok, 10% Err
+    );
+    let weighted_result_prop = for_all(
+        weighted_result_gen,
+        |r: &std::result::Result<i32, String>| {
+            match r {
+                Ok(n) => *n >= 1 && *n <= 10,
+                Err(_s) => true, // Any string is valid
+            }
+        },
+    );
+    match weighted_result_prop.run(&Config::default().with_tests(30)) {
+        TestResult::Pass => println!("Weighted Result generator property passed"),
+        result => println!("Weighted Result generator property failed: {:?}", result),
+    }
+
     println!();
     println!("Generator testing complete");
 }
