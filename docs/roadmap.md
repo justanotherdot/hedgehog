@@ -77,22 +77,26 @@ Based on analysis of existing ports and Rust's constraints:
 - [ ] `Annotation` - Debug annotations
 
 #### Tree Structure (`hedgehog-core/src/tree.rs`)
-- [ ] `Tree<T>` - Rose tree for values and shrinks
-- [ ] Tree combinators (`map`, `bind`, `filter`)
-- [ ] Lazy shrinking via closures
+- [x] `Tree<T>` - Rose tree for values and shrinks
+- [x] Tree combinators (`map`, `bind`, `filter`)
+- [x] Lazy shrinking via closures
 - [ ] Tree rendering for debugging
 
 #### Generator Framework (`hedgehog-core/src/gen.rs`)
-- [ ] `Gen<T>` - Core generator type
-- [ ] Basic combinators (`map`, `bind`, `filter`)
-- [ ] Primitive generators (`constant`, `choice`)
-- [ ] Collection generators (`vec`, `option`)
+- [x] `Gen<T>` - Core generator type
+- [x] Basic combinators (`map`, `bind`, `filter`)
+- [x] Primitive generators (`constant`, `bool`, `int_range`)
+- [x] Character generators (`ascii_alpha`, `ascii_alphanumeric`, `ascii_printable`)
+- [x] String generators with shrinking
+- [x] Vector generators with element removal shrinking
+- [x] Option generators with None shrinking
+- [x] Tuple generators with component-wise shrinking
 
 #### Property Testing (`hedgehog-core/src/property.rs`)
-- [ ] `Property<T>` - Property test wrapper
-- [ ] Basic property runner
-- [ ] Simple shrinking logic
-- [ ] Test result reporting
+- [x] `Property<T>` - Property test wrapper
+- [x] Basic property runner
+- [x] Simple shrinking logic
+- [x] Test result reporting
 
 ### Success Criteria
 - Can write: `Gen::constant(42).check(|x| x == 42)`

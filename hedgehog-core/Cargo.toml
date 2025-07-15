@@ -13,3 +13,7 @@ categories.workspace = true
 [dependencies]
 rand.workspace = true
 thiserror.workspace = true
+
+[[example]]
+name = "generators"
+path = "../examples/generators.rs"
