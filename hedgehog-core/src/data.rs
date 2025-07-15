@@ -19,6 +19,21 @@ impl Size {
     pub fn get(&self) -> usize {
         self.0
     }
+    
+    /// Scale size by a factor.
+    pub fn scale(&self, factor: f64) -> Self {
+        Size((self.0 as f64 * factor) as usize)
+    }
+    
+    /// Clamp size to a maximum value.
+    pub fn clamp(&self, max: usize) -> Self {
+        Size(self.0.min(max))
+    }
+    
+    /// Golden ratio progression for size scaling.
+    pub fn golden(&self) -> Self {
+        Size((self.0 as f64 * 0.61803398875) as usize)
+    }
 }
 
 impl From<usize> for Size {
@@ -52,6 +67,29 @@ impl Seed {
         let c = a.wrapping_add(b);
         let d = b.wrapping_add(c);
         (Seed(a, c), Seed(b, d))
+    }
+    
+    /// Generate the next random value and advance the seed.
+    pub fn next_u64(self) -> (u64, Self) {
+        let Seed(a, b) = self;
+        let next = a.wrapping_add(b);
+        let new_seed = Seed(
+            a.wrapping_mul(0x9e3779b97f4a7c15),
+            b.wrapping_add(0x9e3779b97f4a7c15)
+        );
+        (next, new_seed)
+    }
+    
+    /// Generate a bounded random value [0, bound).
+    pub fn next_bounded(self, bound: u64) -> (u64, Self) {
+        let (value, new_seed) = self.next_u64();
+        ((value as u128 * bound as u128 >> 64) as u64, new_seed)
+    }
+    
+    /// Generate a random bool.
+    pub fn next_bool(self) -> (bool, Self) {
+        let (value, new_seed) = self.next_u64();
+        (value & 1 == 1, new_seed)
     }
     
     /// Generate a random seed.

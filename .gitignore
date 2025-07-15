@@ -1,7 +1,67 @@
-.cabal-sandbox/
-cabal.sandbox.config
-cabal.project.local
-dist/
-dist-newstyle/
-.ghc.environment.*
-.stack-work/
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Backup files
+*~
+*.bak
+*.backup
+*.old
+
+# Temporary folders
+tmp/
+temp/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment variables
+.env
+.env.local
+.env.test
+
+# Profiling files
+*.prof
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Documentation build artifacts
+/book/
+/guide/
+
+# Example artifacts
+examples/target/

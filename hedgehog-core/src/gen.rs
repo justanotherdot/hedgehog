@@ -1,6 +1,6 @@
 //! Generator combinators for property-based testing.
 
-use crate::{data::*, error::*, random::*, tree::*};
+use crate::{data::*, tree::*};
 
 /// A generator for test data of type `T`.
 ///
@@ -43,12 +43,12 @@ where
     /// Map a function over the generated values.
     pub fn map<U, F>(self, f: F) -> Gen<U>
     where
-        F: Fn(T) -> U + 'static,
+        F: Fn(T) -> U + 'static + Clone,
         U: 'static,
     {
         Gen::new(move |size, seed| {
             let tree = self.generate(size, seed);
-            tree.map(&f)
+            tree.map(f.clone())
         })
     }
     
@@ -57,13 +57,12 @@ where
     where
         F: Fn(T) -> Gen<U> + 'static,
         U: 'static,
+        T: Clone,
     {
         Gen::new(move |size, seed| {
             let (seed1, seed2) = seed.split();
             let tree = self.generate(size, seed1);
-            let value = tree.outcome();
-            let next_gen = f(value);
-            next_gen.generate(size, seed2)
+            tree.bind(|value| f(value.clone()).generate(size, seed2))
         })
     }
     
@@ -74,23 +73,54 @@ where
         T: Clone,
     {
         Gen::new(move |size, seed| {
-            // Simple implementation - in practice would need retry logic
             let tree = self.generate(size, seed);
-            let value = tree.outcome();
-            if predicate(&value) {
-                tree
-            } else {
-                Tree::singleton(value) // Placeholder - needs proper filtering
-            }
+            let value = tree.value.clone();
+            tree.filter(&predicate).unwrap_or_else(|| Tree::singleton(value))
         })
     }
 }
 
-// Placeholder implementations for other modules
-impl<T> Clone for Gen<T> {
-    fn clone(&self) -> Self {
-        // This is a limitation of the current approach
-        // In practice, we'd need a different design for cloning
-        panic!("Gen cannot be cloned with current implementation")
+/// Primitive generators.
+impl Gen<bool> {
+    /// Generate a random boolean.
+    pub fn bool() -> Self {
+        Gen::new(|_size, seed| {
+            let (value, _new_seed) = seed.next_bool();
+            Tree::singleton(value)
+        })
     }
 }
+
+impl Gen<i32> {
+    /// Generate an integer in the given range.
+    pub fn int_range(min: i32, max: i32) -> Self {
+        Gen::new(move |_size, seed| {
+            let range = (max - min + 1) as u64;
+            let (value, _new_seed) = seed.next_bounded(range);
+            let result = min + value as i32;
+            
+            // Create shrinks towards zero
+            let mut shrinks = Vec::new();
+            let mut current = result;
+            while current != 0 && current != min {
+                current = if current > 0 { current / 2 } else { current / 2 };
+                if current >= min && current <= max && current != result {
+                    shrinks.push(Tree::singleton(current));
+                }
+            }
+            
+            Tree::with_children(result, shrinks)
+        })
+    }
+    
+    /// Generate a positive integer.
+    pub fn positive() -> Self {
+        Self::int_range(1, i32::MAX)
+    }
+    
+    /// Generate a natural number (including zero).
+    pub fn natural() -> Self {
+        Self::int_range(0, i32::MAX)
+    }
+}
+
