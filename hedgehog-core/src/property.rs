@@ -7,6 +7,7 @@ use crate::{data::*, error::*, gen::*, tree::*};
 pub struct Property<T> {
     generator: Gen<T>,
     test_function: Box<dyn Fn(&T) -> TestResult>,
+    variable_name: Option<String>,
 }
 
 impl<T> Property<T>
@@ -21,6 +22,7 @@ where
         Property {
             generator,
             test_function: Box::new(test_function),
+            variable_name: None,
         }
     }
 
@@ -48,6 +50,34 @@ where
                 }
             }
         })
+    }
+
+    /// Create a property that checks a boolean condition with a named variable.
+    pub fn for_all_named<F>(generator: Gen<T>, variable_name: &str, condition: F) -> Self
+    where
+        F: Fn(&T) -> bool + 'static,
+    {
+        let mut property = Property::new(generator, move |input| {
+            if condition(input) {
+                TestResult::Pass {
+                    tests_run: 1,
+                    property_name: None,
+                    module_path: None,
+                }
+            } else {
+                TestResult::Fail {
+                    counterexample: format!("{:?}", input),
+                    tests_run: 0,
+                    shrinks_performed: 0,
+                    property_name: None,
+                    module_path: None,
+                    assertion_type: Some("Boolean Condition".to_string()),
+                    shrink_steps: Vec::new(),
+                }
+            }
+        });
+        property.variable_name = Some(variable_name.to_string());
+        property
     }
 
     /// Run this property with the given configuration.
@@ -148,6 +178,7 @@ where
         shrink_steps.push(ShrinkStep {
             counterexample: format!("{:?}", current_failure),
             step: 0,
+            variable_name: self.variable_name.clone(),
         });
 
         // Simple breadth-first shrinking
@@ -165,6 +196,7 @@ where
                     shrink_steps.push(ShrinkStep {
                         counterexample: format!("{:?}", shrink_value),
                         step: shrink_count,
+                        variable_name: self.variable_name.clone(),
                     });
                 }
                 TestResult::Pass { .. } => continue,
@@ -196,6 +228,15 @@ where
     F: Fn(&T) -> bool + 'static,
 {
     Property::for_all(generator, condition)
+}
+
+/// Create a property that checks a boolean condition with a named variable.
+pub fn for_all_named<T, F>(generator: Gen<T>, variable_name: &str, condition: F) -> Property<T>
+where
+    T: 'static + std::fmt::Debug,
+    F: Fn(&T) -> bool + 'static,
+{
+    Property::for_all_named(generator, variable_name, condition)
 }
 
 #[cfg(test)]
@@ -244,6 +285,23 @@ mod tests {
     }
 
     #[test]
+    fn test_variable_name_tracking() {
+        // Test that variable names are tracked in shrinking progression
+        let prop = for_all_named(Gen::int_range(5, 20), "n", |&n| n < 10);
+        let result = prop.run(&Config::default().with_tests(10));
+
+        if let TestResult::Fail { shrink_steps, .. } = result {
+            // Check that variable names are present in shrink steps
+            assert!(!shrink_steps.is_empty());
+            for step in shrink_steps {
+                assert_eq!(step.variable_name, Some("n".to_string()));
+            }
+        } else {
+            panic!("Expected a failing test result for variable name tracking");
+        }
+    }
+
+    #[test]
     fn snapshot_failure_reporting() {
         // Test enhanced failure reporting with shrinking progression
         // Use a deterministic result for consistent testing
@@ -260,18 +318,22 @@ mod tests {
                 ShrinkStep {
                     counterexample: "20".to_string(),
                     step: 0,
+                    variable_name: None,
                 },
                 ShrinkStep {
                     counterexample: "10".to_string(),
                     step: 1,
+                    variable_name: None,
                 },
                 ShrinkStep {
                     counterexample: "5".to_string(),
                     step: 2,
+                    variable_name: None,
                 },
                 ShrinkStep {
                     counterexample: "7".to_string(),
                     step: 3,
+                    variable_name: None,
                 },
             ],
         };
@@ -279,6 +341,44 @@ mod tests {
         // Capture the failure output for regression testing
         let output = format!("{}", result);
         archetype::snap("enhanced_failure_reporting", output);
+    }
+
+    #[test]
+    fn snapshot_variable_name_reporting() {
+        // Test enhanced failure reporting with variable names
+        let expected_result = TestResult::Fail {
+            counterexample: "7".to_string(),
+            tests_run: 1,
+            shrinks_performed: 3,
+            property_name: Some("snapshot_variable_name_reporting".to_string()),
+            module_path: Some("hedgehog_core::property::tests".to_string()),
+            assertion_type: Some("Boolean Condition".to_string()),
+            shrink_steps: vec![
+                ShrinkStep {
+                    counterexample: "20".to_string(),
+                    step: 0,
+                    variable_name: Some("n".to_string()),
+                },
+                ShrinkStep {
+                    counterexample: "10".to_string(),
+                    step: 1,
+                    variable_name: Some("n".to_string()),
+                },
+                ShrinkStep {
+                    counterexample: "5".to_string(),
+                    step: 2,
+                    variable_name: Some("n".to_string()),
+                },
+                ShrinkStep {
+                    counterexample: "7".to_string(),
+                    step: 3,
+                    variable_name: Some("n".to_string()),
+                },
+            ],
+        };
+
+        let formatted_output = format!("{}", expected_result);
+        archetype::snap("variable_name_failure_reporting", formatted_output);
     }
 
     #[test]

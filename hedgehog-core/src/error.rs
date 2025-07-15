@@ -37,6 +37,8 @@ pub struct ShrinkStep {
     pub counterexample: String,
     /// The step number (0 = original, 1+ = shrink attempts).
     pub step: usize,
+    /// Optional variable name for this input (e.g., "xs", "n", "input").
+    pub variable_name: Option<String>,
 }
 
 /// Outcome of a property test.
@@ -111,9 +113,25 @@ impl fmt::Display for TestResult {
                     writeln!(f, "    Shrinking progression:")?;
                     for step in shrink_steps {
                         if step.step == 0 {
-                            writeln!(f, "      │ Original: {}", step.counterexample)?;
+                            if let Some(ref var_name) = step.variable_name {
+                                writeln!(
+                                    f,
+                                    "      │ forAll 0 = {} -- {}",
+                                    step.counterexample, var_name
+                                )?;
+                            } else {
+                                writeln!(f, "      │ Original: {}", step.counterexample)?;
+                            }
                         } else {
-                            writeln!(f, "      │ Step {}: {}", step.step, step.counterexample)?;
+                            if let Some(ref var_name) = step.variable_name {
+                                writeln!(
+                                    f,
+                                    "      │ forAll {} = {} -- {}",
+                                    step.step, step.counterexample, var_name
+                                )?;
+                            } else {
+                                writeln!(f, "      │ Step {}: {}", step.step, step.counterexample)?;
+                            }
                         }
                     }
                     writeln!(f)?;

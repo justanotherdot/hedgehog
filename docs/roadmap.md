@@ -442,6 +442,71 @@ Gen::list_with_range(Range::linear(0, size.get()), Gen::int_range(1, 100))
 
 **Priority**: High - Essential for production-quality property testing
 
+### Custom Test Runner CLI
+
+**Current limitation**: Our enhanced test reporting with box drawing characters and proper formatting is only visible when tests fail or when explicitly displayed in examples. For passing tests, users only see standard cargo output:
+
+```
+test my_property_test ... ok
+```
+
+Instead of our beautiful formatted output:
+```
+━━━ my_module ━━━
+  ✓ my_property passed 100 tests.
+```
+
+**Root cause**: Cargo's built-in test harness doesn't provide hooks for custom output formatting. This is a known limitation that affects many testing libraries.
+
+**Solution**: Build a `cargo-hedgehog` CLI tool following the pattern of `cargo-nextest`, `cargo-criterion`, etc.:
+
+```bash
+cargo install cargo-hedgehog
+cargo hedgehog test  # Shows enhanced reporting for all tests
+```
+
+**Benefits**:
+- **Familiar pattern** - Users already know similar tools
+- **Non-intrusive** - Doesn't require changing existing test code  
+- **Optional** - Users can still use standard `cargo test`
+- **Full control** - Complete formatting control over output
+- **Future-proof** - Can migrate when cargo adds custom test runner support
+
+**Features to implement**:
+- Enhanced test reporting with box drawing
+- Parallel test execution
+- Filtering and selection
+- Progress indicators
+- Test result aggregation
+- JSON output for CI/CD integration
+
+**Priority**: High - Essential for showcasing our enhanced reporting capabilities
+
+## Implementation Priority Order
+
+Based on current analysis and user feedback, the next development priorities are:
+
+1. **Distribution Shaping and Range System** (High Priority)
+   - Implement `Range` combinators (linear, exponential, constant)
+   - Add `Gen::frequency()` for weighted choice
+   - Better control over string lengths and numeric distributions
+   - Addresses fundamental usability gaps in current implementation
+
+2. **Input Variable Name Tracking** (Medium Priority)
+   - Enhance failure reporting to show variable names in shrinking progression
+   - Make output more like Haskell Hedgehog with named inputs
+   - Improve debugging experience with contextual information
+
+3. **Derive Macros** (Medium Priority)
+   - Add `#[derive(Generate)]` for custom types
+   - Improve ergonomics for user-defined types
+   - Reduce boilerplate for common generator patterns
+
+4. **Custom CLI Tool** (Medium Priority)
+   - Build `cargo-hedgehog` to showcase enhanced reporting
+   - Provide proper display for success cases with box drawing
+   - Enable full control over test output formatting
+
 ## Future Considerations
 
 ### Date/Time Generators (Maybe)

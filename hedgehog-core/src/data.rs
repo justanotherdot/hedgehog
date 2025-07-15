@@ -180,18 +180,64 @@ pub struct Range<T> {
     pub max: T,
     /// Origin point for shrinking (usually zero or closest valid value).
     pub origin: Option<T>,
+    /// Distribution shape for generating values within the range.
+    pub distribution: Distribution,
+}
+
+/// Distribution shapes for value generation within ranges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Distribution {
+    /// Uniform distribution across the range.
+    Uniform,
+    /// Linear distribution favoring smaller values.
+    Linear,
+    /// Exponential distribution strongly favoring smaller values.
+    Exponential,
+    /// Constant distribution (always generates the same value).
+    Constant,
 }
 
 impl<T> Range<T>
 where
     T: Copy + PartialOrd,
 {
-    /// Create a new range with the given bounds.
+    /// Create a new range with the given bounds and uniform distribution.
     pub fn new(min: T, max: T) -> Self {
         Range {
             min,
             max,
             origin: None,
+            distribution: Distribution::Uniform,
+        }
+    }
+
+    /// Create a linear range that favors smaller values.
+    pub fn linear(min: T, max: T) -> Self {
+        Range {
+            min,
+            max,
+            origin: None,
+            distribution: Distribution::Linear,
+        }
+    }
+
+    /// Create an exponential range that strongly favors smaller values.
+    pub fn exponential(min: T, max: T) -> Self {
+        Range {
+            min,
+            max,
+            origin: None,
+            distribution: Distribution::Exponential,
+        }
+    }
+
+    /// Create a constant range that always generates the same value.
+    pub fn constant(value: T) -> Self {
+        Range {
+            min: value,
+            max: value,
+            origin: Some(value),
+            distribution: Distribution::Constant,
         }
     }
 
@@ -205,67 +251,143 @@ where
     pub fn contains(&self, value: &T) -> bool {
         value >= &self.min && value <= &self.max
     }
+
+    /// Get the distribution shape for this range.
+    pub fn distribution(&self) -> Distribution {
+        self.distribution
+    }
 }
 
 impl Range<i32> {
-    /// Create a positive range [1, i32::MAX].
+    /// Create a positive range [1, i32::MAX] with linear distribution.
     pub fn positive() -> Self {
-        Range::new(1, i32::MAX).with_origin(1)
+        Range::linear(1, i32::MAX).with_origin(1)
     }
 
-    /// Create a natural range [0, i32::MAX].
+    /// Create a natural range [0, i32::MAX] with linear distribution.
     pub fn natural() -> Self {
-        Range::new(0, i32::MAX).with_origin(0)
+        Range::linear(0, i32::MAX).with_origin(0)
     }
 
-    /// Create a small positive range [1, 100].
+    /// Create a small positive range [1, 100] with uniform distribution.
     pub fn small_positive() -> Self {
         Range::new(1, 100).with_origin(1)
     }
 }
 
 impl Range<i64> {
-    /// Create a positive range [1, i64::MAX].
+    /// Create a positive range [1, i64::MAX] with linear distribution.
     pub fn positive() -> Self {
-        Range::new(1, i64::MAX).with_origin(1)
+        Range::linear(1, i64::MAX).with_origin(1)
     }
 
-    /// Create a natural range [0, i64::MAX].
+    /// Create a natural range [0, i64::MAX] with linear distribution.
     pub fn natural() -> Self {
-        Range::new(0, i64::MAX).with_origin(0)
+        Range::linear(0, i64::MAX).with_origin(0)
     }
 }
 
 impl Range<u32> {
-    /// Create a positive range [1, u32::MAX].
+    /// Create a positive range [1, u32::MAX] with linear distribution.
     pub fn positive() -> Self {
-        Range::new(1, u32::MAX).with_origin(1)
+        Range::linear(1, u32::MAX).with_origin(1)
     }
 
-    /// Create a natural range [0, u32::MAX].
+    /// Create a natural range [0, u32::MAX] with linear distribution.
     pub fn natural() -> Self {
-        Range::new(0, u32::MAX).with_origin(0)
+        Range::linear(0, u32::MAX).with_origin(0)
     }
 }
 
 impl Range<f64> {
-    /// Create a unit range [0.0, 1.0].
+    /// Create a unit range [0.0, 1.0] with uniform distribution.
     pub fn unit() -> Self {
         Range::new(0.0, 1.0).with_origin(0.0)
     }
 
-    /// Create a positive range [f64::EPSILON, f64::MAX].
+    /// Create a positive range [f64::EPSILON, f64::MAX] with exponential distribution.
     pub fn positive() -> Self {
-        Range::new(f64::EPSILON, f64::MAX).with_origin(f64::EPSILON)
+        Range::exponential(f64::EPSILON, f64::MAX).with_origin(f64::EPSILON)
     }
 
-    /// Create a natural range [0.0, f64::MAX].
+    /// Create a natural range [0.0, f64::MAX] with linear distribution.
     pub fn natural() -> Self {
-        Range::new(0.0, f64::MAX).with_origin(0.0)
+        Range::linear(0.0, f64::MAX).with_origin(0.0)
     }
 
-    /// Create a standard normal-like range [-3.0, 3.0].
+    /// Create a standard normal-like range [-3.0, 3.0] with uniform distribution.
     pub fn normal() -> Self {
         Range::new(-3.0, 3.0).with_origin(0.0)
+    }
+}
+
+/// Helper functions for distribution sampling within ranges.
+impl Distribution {
+    /// Sample a value from the distribution within the given range.
+    pub fn sample_u64(&self, seed: Seed, range_size: u64) -> (u64, Seed) {
+        match self {
+            Distribution::Uniform => seed.next_bounded(range_size),
+            Distribution::Linear => {
+                // Linear distribution: higher probability for smaller values
+                // Use triangular distribution where P(x) = 2*(range_size - x) / (range_size^2)
+                let (u1, new_seed) = seed.next_bounded(range_size);
+                let (u2, final_seed) = new_seed.next_bounded(range_size);
+                (u1.min(u2), final_seed)
+            }
+            Distribution::Exponential => {
+                // Exponential distribution: much higher probability for smaller values
+                // Use exponential decay: sample from geometric distribution
+                let (uniform, new_seed) = seed.next_bounded(1000);
+                let exponential = if uniform < 500 {
+                    0
+                } else if uniform < 750 {
+                    1
+                } else if uniform < 875 {
+                    2
+                } else if uniform < 937 {
+                    3
+                } else {
+                    4.min(range_size.saturating_sub(1))
+                };
+                (exponential.min(range_size.saturating_sub(1)), new_seed)
+            }
+            Distribution::Constant => {
+                // Always return 0 (will be adjusted by caller to the constant value)
+                (0, seed)
+            }
+        }
+    }
+
+    /// Sample a float value from the distribution within [0.0, 1.0].
+    pub fn sample_f64(&self, seed: Seed) -> (f64, Seed) {
+        match self {
+            Distribution::Uniform => {
+                let (value, new_seed) = seed.next_u64();
+                // Convert to [0.0, 1.0]
+                let float_val = (value as f64) / (u64::MAX as f64);
+                (float_val, new_seed)
+            }
+            Distribution::Linear => {
+                // Linear distribution favoring smaller values
+                let (u1, seed2) = seed.next_u64();
+                let (u2, final_seed) = seed2.next_u64();
+                let val1 = (u1 as f64) / (u64::MAX as f64);
+                let val2 = (u2 as f64) / (u64::MAX as f64);
+                (val1.min(val2), final_seed)
+            }
+            Distribution::Exponential => {
+                // Exponential distribution strongly favoring smaller values
+                let (uniform, new_seed) = seed.next_u64();
+                let normalized = (uniform as f64) / (u64::MAX as f64);
+                // Use exponential decay: -ln(1-u) / λ, with λ=2 for reasonable spread
+                let exponential = if normalized >= 1.0 {
+                    0.0
+                } else {
+                    -((1.0 - normalized).ln()) / 2.0
+                };
+                (exponential.min(1.0), new_seed)
+            }
+            Distribution::Constant => (0.0, seed),
+        }
     }
 }
