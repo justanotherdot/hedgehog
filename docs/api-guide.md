@@ -1,6 +1,6 @@
 # Hedgehog API Guide
 
-This guide covers the key features of the Hedgehog property-based testing library for Rust, focusing on distribution shaping and variable name tracking.
+This guide covers the key features of the Hedgehog property-based testing library for Rust, focusing on distribution shaping, variable name tracking, and derive macros.
 
 ## Quick Start
 
@@ -21,6 +21,20 @@ let prop = for_all_named(
     "n",
     |&n| n > 0
 );
+assert!(matches!(prop.run(&Config::default()), TestResult::Pass { .. }));
+
+// Property test with derive macros
+use hedgehog_derive::Generate;
+
+#[derive(Generate, Debug, Clone)]
+struct User {
+    name: String,
+    age: u32,
+}
+
+let prop = for_all_named(User::generate(), "user", |user: &User| {
+    !user.name.is_empty() && user.age <= 100
+});
 assert!(matches!(prop.run(&Config::default()), TestResult::Pass { .. }));
 ```
 
@@ -226,6 +240,104 @@ Gen::one_of(vec![
     Gen::constant("blue"),
 ])
 ```
+
+## Derive Macros
+
+Hedgehog provides derive macros for automatic generator creation. Enable with the `derive` feature:
+
+```toml
+[dependencies]
+hedgehog = { version = "0.1.0", features = ["derive"] }
+```
+
+### Basic Usage
+
+```rust
+use hedgehog::*;
+use hedgehog_derive::Generate;
+
+#[derive(Generate, Debug, Clone)]
+struct User {
+    name: String,
+    age: u32,
+    active: bool,
+}
+
+// Automatically generates:
+// impl User {
+//     pub fn generate() -> Gen<Self> { ... }
+// }
+
+let user_gen = User::generate();
+```
+
+### Supported Types
+
+- **Named structs**: `struct User { name: String, age: u32 }`
+- **Tuple structs**: `struct Point(i32, i32)`
+- **Unit structs**: `struct Unit`
+- **Enums**: All variant types (unit, tuple, named fields)
+
+### Built-in Type Mappings
+
+| Type | Generator | Range |
+|------|-----------|--------|
+| `String` | `Gen::<String>::ascii_alpha()` | Variable length |
+| `i32`, `u32`, `i64` | `Gen::from_range(Range::new(0, 100))` | 0 to 100 |
+| `f64` | `Gen::from_range(Range::new(0.0, 100.0))` | 0.0 to 100.0 |
+| `bool` | `Gen::bool()` | true/false |
+| `char` | `Gen::<char>::ascii_alpha()` | a-z, A-Z |
+| `u8`, `u16`, `i8`, `i16`, `f32` | Mapped from larger types | Type-appropriate ranges |
+
+### Custom Types
+
+```rust
+#[derive(Generate, Debug, Clone)]
+struct Address {
+    street: String,
+    city: String,
+}
+
+#[derive(Generate, Debug, Clone)]
+struct Person {
+    name: String,
+    address: Address,  // Uses Address::generate()
+}
+```
+
+### Complete Example
+
+```rust
+#[derive(Generate, Debug, Clone)]
+enum PaymentMethod {
+    Cash,
+    Card { number: String, expiry: String },
+    Digital(String),
+}
+
+#[derive(Generate, Debug, Clone)]
+struct Order {
+    id: u32,
+    payment: PaymentMethod,
+    total: f64,
+}
+
+fn test_order_validation() {
+    let order_prop = for_all_named(Order::generate(), "order", |order: &Order| {
+        order.total >= 0.0 && order.id > 0
+    });
+    
+    match order_prop.run(&Config::default()) {
+        TestResult::Pass { .. } => println!("✓ Order validation passed"),
+        TestResult::Fail { counterexample, .. } => {
+            println!("✗ Failed with order: {}", counterexample);
+        }
+        result => println!("Unexpected result: {:?}", result),
+    }
+}
+```
+
+For comprehensive documentation, see `docs/derive-macros.md`.
 
 ## Property Testing Functions
 
