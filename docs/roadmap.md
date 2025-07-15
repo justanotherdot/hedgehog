@@ -294,6 +294,54 @@ Based on analysis of existing ports and Rust's constraints:
 - **Compatibility**: Extensive testing with existing codebases
 - **Maintenance**: Clear documentation and contributor guidelines
 
+## Future Considerations
+
+### Configurable Random Number Generators
+
+Currently, Hedgehog uses a hardcoded SplitMix64 PRNG, which provides excellent quality for property testing and matches the choice made by Haskell Hedgehog. However, users may eventually want to configure the RNG algorithm.
+
+**Current limitation**: Users can control the seed but not the algorithm:
+```rust
+let seed = Seed::from_u64(12345);  // Deterministic seed
+let seed = Seed::random();         // System randomness
+// But always uses SplitMix64
+```
+
+**Potential approaches for configurability**:
+
+#### Option A: RNG Selection in Config
+```rust
+let config = Config::default()
+    .with_rng(RngType::SplitMix64)  // or ChaCha20, Xoshiro, etc.
+    .with_tests(100);
+```
+- **Pros**: Simple API, backward compatible
+- **Cons**: Runtime dispatch overhead, limited to predefined algorithms
+
+#### Option B: Generic Seed Type
+```rust
+struct Property<T, R: SplittableRng> {
+    generator: Gen<T, R>,
+    // ...
+}
+```
+- **Pros**: Zero-cost abstraction, compile-time selection
+- **Cons**: Major API complexity, significant refactoring required
+
+#### Option C: Trait-Based Runtime Dispatch
+```rust
+trait SplittableRng {
+    fn split(self) -> (Self, Self);
+    fn next_u64(self) -> (u64, Self);
+}
+```
+- **Pros**: Flexible, allows custom RNGs
+- **Cons**: Runtime overhead, more complex implementation
+
+**Recommendation**: Defer until there's concrete user demand. SplitMix64 is proven for property testing and adding configurability would complicate the API without clear benefit. Most users care about test quality, not RNG algorithm choice.
+
+**Requirements for any RNG**: Must be splittable for deterministic property testing. This rules out most standard PRNGs that aren't designed for splitting.
+
 ## Conclusion
 
 This roadmap provides a clear path from foundation to production-ready library. Each phase builds incrementally on previous work, with clear success criteria and deliverables. The emphasis on preserving Hedgehog's core value proposition while embracing Rust's strengths should result in a library that's both powerful and ergonomic.

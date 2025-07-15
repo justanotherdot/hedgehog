@@ -58,26 +58,29 @@ pub struct Seed(pub u64, pub u64);
 impl Seed {
     /// Create a new seed from a single value.
     pub fn from_u64(value: u64) -> Self {
-        Seed(value, value.wrapping_mul(0x9e3779b97f4a7c15))
+        let state = splitmix64_mix(value);
+        let gamma = mix_gamma(state);
+        Seed(state, gamma)
     }
 
     /// Split a seed into two independent seeds.
+    /// Uses SplitMix64 splitting strategy for independence.
     pub fn split(self) -> (Self, Self) {
-        let Seed(a, b) = self;
-        let c = a.wrapping_add(b);
-        let d = b.wrapping_add(c);
-        (Seed(a, c), Seed(b, d))
+        let Seed(state, gamma) = self;
+        let new_state = state.wrapping_add(gamma);
+        let output = splitmix64_mix(new_state);
+        let new_gamma = mix_gamma(output);
+
+        (Seed(new_state, gamma), Seed(output, new_gamma))
     }
 
     /// Generate the next random value and advance the seed.
+    /// Uses SplitMix64 algorithm for high-quality randomness.
     pub fn next_u64(self) -> (u64, Self) {
-        let Seed(a, b) = self;
-        let next = a.wrapping_add(b);
-        let new_seed = Seed(
-            a.wrapping_mul(0x9e3779b97f4a7c15),
-            b.wrapping_add(0x9e3779b97f4a7c15),
-        );
-        (next, new_seed)
+        let Seed(state, gamma) = self;
+        let new_state = state.wrapping_add(gamma);
+        let output = splitmix64_mix(new_state);
+        (output, Seed(new_state, gamma))
     }
 
     /// Generate a bounded random value [0, bound).
@@ -151,4 +154,19 @@ impl Config {
         self.size_limit = size;
         self
     }
+}
+
+/// SplitMix64 mixing function for high-quality output.
+fn splitmix64_mix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9e3779b97f4a7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+    z ^ (z >> 31)
+}
+
+/// Generate a good gamma value for SplitMix64 splitting.
+fn mix_gamma(mut z: u64) -> u64 {
+    z = splitmix64_mix(z);
+    // Ensure gamma is odd for maximal period
+    (z | 1).wrapping_mul(0x9e3779b97f4a7c15)
 }
