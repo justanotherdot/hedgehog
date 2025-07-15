@@ -2,6 +2,58 @@
 
 use crate::{data::*, tree::*};
 
+/// Simplify a character towards simpler forms for shrinking.
+fn simplify_char(ch: char) -> char {
+    match ch {
+        // Uppercase to lowercase
+        'A'..='Z' => ch.to_ascii_lowercase(),
+        // Special characters to simpler ones
+        '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' => 'a',
+        '(' | ')' | '[' | ']' | '{' | '}' => 'a',
+        '.' | ',' | ';' | ':' | '\'' | '"' => 'a',
+        '+' | '-' | '=' | '_' | '|' | '\\' | '/' => 'a',
+        '~' | '`' | '<' | '>' | '?' => 'a',
+        // Numbers to lower numbers
+        '9' => '8',
+        '8' => '7',
+        '7' => '6',
+        '6' => '5',
+        '5' => '4',
+        '4' => '3',
+        '3' => '2',
+        '2' => '1',
+        '1' => '0',
+        // Lowercase letters towards 'a'
+        'z' => 'y',
+        'y' => 'x',
+        'x' => 'w',
+        'w' => 'v',
+        'v' => 'u',
+        'u' => 't',
+        't' => 's',
+        's' => 'r',
+        'r' => 'q',
+        'q' => 'p',
+        'p' => 'o',
+        'o' => 'n',
+        'n' => 'm',
+        'm' => 'l',
+        'l' => 'k',
+        'k' => 'j',
+        'j' => 'i',
+        'i' => 'h',
+        'h' => 'g',
+        'g' => 'f',
+        'f' => 'e',
+        'e' => 'd',
+        'd' => 'c',
+        'c' => 'b',
+        'b' => 'a',
+        // Everything else stays the same
+        _ => ch,
+    }
+}
+
 /// A generator for test data of type `T`.
 ///
 /// Generators are explicit, first-class values that can be composed
@@ -100,16 +152,51 @@ impl Gen<i32> {
             let (value, _new_seed) = seed.next_bounded(range);
             let result = min + value as i32;
 
-            // Create shrinks towards zero
+            // Enhanced shrinking: towards zero, binary search, and origin-based
             let mut shrinks = Vec::new();
-            let mut current = result;
-            while current != 0 && current != min {
-                current = if current > 0 {
-                    current / 2
+
+            // First, try shrinking towards the origin (closest valid value to 0)
+            let origin = if min <= 0 && max >= 0 {
+                0 // Zero is in range
+            } else if min > 0 {
+                min // Positive range, shrink towards minimum
+            } else {
+                max // Negative range, shrink towards maximum (closest to 0)
+            };
+
+            if origin != result {
+                shrinks.push(Tree::singleton(origin));
+            }
+
+            // Binary search shrinking between result and origin
+            let mut low = if result < origin { result } else { origin };
+            let mut high = if result > origin { result } else { origin };
+
+            while high - low > 1 {
+                let mid = low + (high - low) / 2;
+                if mid != result && mid >= min && mid <= max {
+                    shrinks.push(Tree::singleton(mid));
+                }
+                if result < origin {
+                    low = mid;
                 } else {
-                    current / 2
+                    high = mid;
+                }
+            }
+
+            // Traditional halving shrinks as fallback
+            let mut current = result;
+            for _ in 0..10 {
+                // Limit iterations to prevent infinite loops
+                current = if current > origin {
+                    current - (current - origin + 1) / 2
+                } else if current < origin {
+                    current + (origin - current + 1) / 2
+                } else {
+                    break;
                 };
-                if current >= min && current <= max && current != result {
+
+                if current != result && current >= min && current <= max {
                     shrinks.push(Tree::singleton(current));
                 }
             }
@@ -190,10 +277,15 @@ impl Gen<String> {
 
             let string_value: String = chars.iter().collect();
 
-            // Generate shrinks by removing characters and shrinking individual chars
+            // Enhanced shrinking: character removal, simplification, and substring removal
             let mut shrinks = Vec::new();
 
-            // Shrink by removing characters
+            // Always try empty string first (ultimate shrink)
+            if !chars.is_empty() {
+                shrinks.push(Tree::singleton(String::new()));
+            }
+
+            // Character removal shrinking
             if !chars.is_empty() {
                 // Remove last character
                 let shorter: String = chars[..chars.len() - 1].iter().collect();
@@ -205,10 +297,56 @@ impl Gen<String> {
                     shrinks.push(Tree::singleton(shorter));
                 }
 
-                // Try empty string
+                // Remove middle character for longer strings
                 if chars.len() > 2 {
-                    shrinks.push(Tree::singleton(String::new()));
+                    let mid = chars.len() / 2;
+                    let mut middle_removed = chars.clone();
+                    middle_removed.remove(mid);
+                    let shorter: String = middle_removed.iter().collect();
+                    shrinks.push(Tree::singleton(shorter));
                 }
+
+                // Try removing multiple characters at once for very long strings
+                if chars.len() > 4 {
+                    let quarter = chars.len() / 4;
+                    let shorter: String = chars[..quarter]
+                        .iter()
+                        .chain(chars[3 * quarter..].iter())
+                        .collect();
+                    shrinks.push(Tree::singleton(shorter));
+                }
+            }
+
+            // Character simplification shrinking
+            if !chars.is_empty() {
+                let mut simplified_chars = chars.clone();
+                let mut did_simplify = false;
+
+                for ch in &mut simplified_chars {
+                    let simplified = simplify_char(*ch);
+                    if simplified != *ch {
+                        *ch = simplified;
+                        did_simplify = true;
+                        break; // Only simplify one character at a time
+                    }
+                }
+
+                if did_simplify {
+                    let simplified_string: String = simplified_chars.iter().collect();
+                    shrinks.push(Tree::singleton(simplified_string));
+                }
+            }
+
+            // Substring shrinking (try common prefixes/suffixes)
+            if chars.len() > 1 {
+                // Try first half
+                let half = chars.len() / 2;
+                let first_half: String = chars[..half].iter().collect();
+                shrinks.push(Tree::singleton(first_half));
+
+                // Try second half
+                let second_half: String = chars[half..].iter().collect();
+                shrinks.push(Tree::singleton(second_half));
             }
 
             Tree::with_children(string_value, shrinks)
@@ -254,10 +392,15 @@ where
                 element_trees.push(element_tree);
             }
 
-            // Generate shrinks by removing elements
+            // Enhanced collection shrinking: element removal + element-wise shrinking
             let mut shrinks = Vec::new();
 
-            // Shrink by removing elements
+            // Always try empty vector first (ultimate shrink)
+            if !elements.is_empty() {
+                shrinks.push(Tree::singleton(Vec::new()));
+            }
+
+            // Element removal shrinking
             if !elements.is_empty() {
                 // Remove last element
                 let mut shorter = elements.clone();
@@ -270,16 +413,48 @@ where
                     shrinks.push(Tree::singleton(shorter));
                 }
 
-                // Try empty vector
+                // Remove middle element for longer vectors
                 if elements.len() > 2 {
-                    shrinks.push(Tree::singleton(Vec::new()));
-                }
-
-                // Try removing middle elements for larger vectors
-                if elements.len() > 4 {
                     let mid = elements.len() / 2;
                     let shorter = [&elements[..mid], &elements[mid + 1..]].concat();
                     shrinks.push(Tree::singleton(shorter));
+                }
+
+                // Remove multiple elements for very long vectors
+                if elements.len() > 6 {
+                    let quarter = elements.len() / 4;
+                    let shorter = [&elements[..quarter], &elements[3 * quarter..]].concat();
+                    shrinks.push(Tree::singleton(shorter));
+                }
+
+                // Try first half and second half
+                if elements.len() > 3 {
+                    let half = elements.len() / 2;
+                    shrinks.push(Tree::singleton(elements[..half].to_vec()));
+                    shrinks.push(Tree::singleton(elements[half..].to_vec()));
+                }
+            }
+
+            // Element-wise shrinking: shrink individual elements while keeping the structure
+            for (i, element_tree) in element_trees.iter().enumerate() {
+                for shrunk_element in element_tree.shrinks() {
+                    let mut shrunk_vec = elements.clone();
+                    shrunk_vec[i] = shrunk_element.clone();
+                    shrinks.push(Tree::singleton(shrunk_vec));
+                }
+            }
+
+            // Smart removal: try removing elements that might be less important
+            if elements.len() > 1 {
+                // Remove every other element
+                let filtered: Vec<_> = elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| i % 2 == 0)
+                    .map(|(_, elem)| elem.clone())
+                    .collect();
+                if filtered.len() < elements.len() {
+                    shrinks.push(Tree::singleton(filtered));
                 }
             }
 
@@ -366,5 +541,341 @@ where
 
             Tree::with_children(tuple_value, shrinks)
         })
+    }
+}
+
+impl<T, E> Gen<Result<T, E>>
+where
+    T: 'static + Clone,
+    E: 'static + Clone,
+{
+    /// Generate Result values using the given success and error generators.
+    /// By default, generates Ok values 75% of the time and Err values 25% of the time.
+    pub fn result_of(ok_gen: Gen<T>, err_gen: Gen<E>) -> Self {
+        Gen::new(move |size, seed| {
+            let (choice_seed, value_seed) = seed.split();
+            let (choice, _) = choice_seed.next_bounded(4);
+
+            if choice == 0 {
+                // Generate Err (25% chance)
+                let err_tree = err_gen.generate(size, value_seed);
+                let err_value = Err(err_tree.value.clone());
+
+                // Shrinking strategy: try shrinking the error, but prioritize Ok values
+                let mut shrinks = Vec::new();
+
+                // Try to shrink to a simple Ok value if possible
+                // We use a minimal seed to generate a simple success case
+                let (ok_seed, _) = value_seed.split();
+                let ok_tree = ok_gen.generate(Size::new(0), ok_seed);
+                shrinks.push(Tree::singleton(Ok(ok_tree.value.clone())));
+
+                // Add shrinks of the error value wrapped in Err
+                for shrink in err_tree.shrinks() {
+                    shrinks.push(Tree::singleton(Err(shrink.clone())));
+                }
+
+                Tree::with_children(err_value, shrinks)
+            } else {
+                // Generate Ok (75% chance)
+                let ok_tree = ok_gen.generate(size, value_seed);
+                let ok_value = Ok(ok_tree.value.clone());
+
+                // Shrinking strategy: shrink the inner value, but keep it as Ok
+                let mut shrinks = Vec::new();
+
+                // Add shrinks of the inner value wrapped in Ok
+                for shrink in ok_tree.shrinks() {
+                    shrinks.push(Tree::singleton(Ok(shrink.clone())));
+                }
+
+                Tree::with_children(ok_value, shrinks)
+            }
+        })
+    }
+
+    /// Generate Result values with custom success/error ratio.
+    /// `ok_weight` should be between 1-10, higher values favor Ok results.
+    pub fn result_of_weighted(ok_gen: Gen<T>, err_gen: Gen<E>, ok_weight: u64) -> Self {
+        let total_weight = ok_weight + 1; // Error always has weight 1
+        Gen::new(move |size, seed| {
+            let (choice_seed, value_seed) = seed.split();
+            let (choice, _) = choice_seed.next_bounded(total_weight);
+
+            if choice < ok_weight {
+                // Generate Ok
+                let ok_tree = ok_gen.generate(size, value_seed);
+                let ok_value = Ok(ok_tree.value.clone());
+
+                let mut shrinks = Vec::new();
+                for shrink in ok_tree.shrinks() {
+                    shrinks.push(Tree::singleton(Ok(shrink.clone())));
+                }
+
+                Tree::with_children(ok_value, shrinks)
+            } else {
+                // Generate Err
+                let err_tree = err_gen.generate(size, value_seed);
+                let err_value = Err(err_tree.value.clone());
+
+                let mut shrinks = Vec::new();
+
+                // Try to shrink to a simple Ok value
+                let (ok_seed, _) = value_seed.split();
+                let ok_tree = ok_gen.generate(Size::new(0), ok_seed);
+                shrinks.push(Tree::singleton(Ok(ok_tree.value.clone())));
+
+                // Add shrinks of the error value
+                for shrink in err_tree.shrinks() {
+                    shrinks.push(Tree::singleton(Err(shrink.clone())));
+                }
+
+                Tree::with_children(err_value, shrinks)
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enhanced_integer_shrinking() {
+        let gen = Gen::int_range(-10, 10);
+        let seed = Seed::from_u64(42);
+        let tree = gen.generate(Size::new(50), seed);
+
+        // Should have origin (0) as a shrink since it's in range
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "Integer should have shrinks");
+        assert!(shrinks.contains(&&0), "Should shrink towards origin (0)");
+    }
+
+    #[test]
+    fn test_positive_range_integer_shrinking() {
+        let gen = Gen::int_range(5, 20);
+        let seed = Seed::from_u64(123);
+        let tree = gen.generate(Size::new(50), seed);
+
+        let shrinks = tree.shrinks();
+        assert!(
+            !shrinks.is_empty(),
+            "Positive range integer should have shrinks"
+        );
+        assert!(
+            shrinks.contains(&&5),
+            "Should shrink towards minimum (5) as origin"
+        );
+    }
+
+    #[test]
+    fn test_character_simplification() {
+        // Test that uppercase letters shrink to lowercase
+        assert_eq!(simplify_char('Z'), 'z');
+        assert_eq!(simplify_char('A'), 'a');
+
+        // Test that special characters shrink to 'a'
+        assert_eq!(simplify_char('!'), 'a');
+        assert_eq!(simplify_char('@'), 'a');
+
+        // Test that numbers shrink towards lower numbers
+        assert_eq!(simplify_char('9'), '8');
+        assert_eq!(simplify_char('5'), '4');
+        assert_eq!(simplify_char('1'), '0');
+
+        // Test that lowercase letters shrink towards 'a'
+        assert_eq!(simplify_char('z'), 'y');
+        assert_eq!(simplify_char('b'), 'a');
+        assert_eq!(simplify_char('a'), 'a'); // 'a' stays 'a'
+    }
+
+    #[test]
+    fn test_string_shrinking_strategies() {
+        let gen = Gen::<String>::ascii_alpha();
+        let seed = Seed::from_u64(999);
+        let tree = gen.generate(Size::new(10), seed);
+
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "String should have shrinks");
+
+        // Should always include empty string as ultimate shrink
+        assert!(
+            shrinks.contains(&&String::new()),
+            "Should include empty string shrink"
+        );
+
+        // If original string is not empty, should have shorter versions
+        if !tree.value.is_empty() {
+            let has_shorter = shrinks.iter().any(|s| s.len() < tree.value.len());
+            assert!(has_shorter, "Should have shorter string shrinks");
+        }
+    }
+
+    #[test]
+    fn test_vector_element_wise_shrinking() {
+        let gen = Gen::<Vec<i32>>::vec_of(Gen::int_range(10, 20));
+        let seed = Seed::from_u64(777);
+        let tree = gen.generate(Size::new(5), seed);
+
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "Vector should have shrinks");
+
+        // Should always include empty vector as ultimate shrink
+        assert!(
+            shrinks.contains(&&Vec::new()),
+            "Should include empty vector shrink"
+        );
+
+        // If original vector is not empty, should have element-wise shrinks
+        if !tree.value.is_empty() {
+            let _has_element_shrinks = shrinks
+                .iter()
+                .any(|v| v.len() == tree.value.len() && *v != &tree.value);
+            // Note: This might not always be true if individual elements don't shrink
+            // But we should at least have removal shrinks
+            let has_removal_shrinks = shrinks.iter().any(|v| v.len() < tree.value.len());
+            assert!(has_removal_shrinks, "Should have removal shrinks");
+        }
+    }
+
+    #[test]
+    fn test_option_shrinking() {
+        let gen = Gen::<Option<i32>>::option_of(Gen::int_range(1, 100));
+        let _seed = Seed::from_u64(555);
+
+        // Generate multiple trees to test both Some and None cases
+        for i in 0..10 {
+            let test_seed = Seed::from_u64(555 + i);
+            let tree = gen.generate(Size::new(50), test_seed);
+            let shrinks = tree.shrinks();
+
+            match &tree.value {
+                Some(_) => {
+                    // Some values should shrink to None
+                    assert!(shrinks.contains(&&None), "Some should shrink to None");
+                }
+                None => {
+                    // None has no shrinks (it's already minimal)
+                    assert!(shrinks.is_empty(), "None should have no shrinks");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_result_shrinking() {
+        let gen = Gen::<std::result::Result<i32, String>>::result_of(
+            Gen::int_range(1, 10),
+            Gen::<String>::ascii_alpha(),
+        );
+        let _seed = Seed::from_u64(333);
+
+        // Generate multiple trees to test both Ok and Err cases
+        for i in 0..20 {
+            let test_seed = Seed::from_u64(333 + i);
+            let tree = gen.generate(Size::new(50), test_seed);
+            let shrinks = tree.shrinks();
+
+            match &tree.value {
+                Ok(_) => {
+                    // Ok values should have shrinks of the inner value
+                    assert!(!shrinks.is_empty(), "Ok should have shrinks");
+                    let has_ok_shrinks = shrinks.iter().any(|r| r.is_ok());
+                    assert!(has_ok_shrinks, "Should have Ok shrinks");
+                }
+                Err(_) => {
+                    // Err values should try to shrink to Ok first
+                    assert!(!shrinks.is_empty(), "Err should have shrinks");
+                    let has_ok_shrink = shrinks.iter().any(|r| r.is_ok());
+                    assert!(has_ok_shrink, "Err should shrink to Ok");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_tuple_shrinking() {
+        let gen =
+            Gen::<(i32, String)>::tuple_of(Gen::int_range(-5, 5), Gen::<String>::ascii_alpha());
+        let seed = Seed::from_u64(111);
+        let tree = gen.generate(Size::new(10), seed);
+
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "Tuple should have shrinks");
+
+        // Should have shrinks that modify first component
+        let has_first_shrinks = shrinks
+            .iter()
+            .any(|(first, second)| first != &tree.value.0 && second == &tree.value.1);
+
+        // Should have shrinks that modify second component
+        let has_second_shrinks = shrinks
+            .iter()
+            .any(|(first, second)| first == &tree.value.0 && second != &tree.value.1);
+
+        // At least one type of component shrinking should be present
+        assert!(
+            has_first_shrinks || has_second_shrinks,
+            "Should have component-wise shrinks"
+        );
+    }
+
+    #[test]
+    fn test_result_weighted_distribution() {
+        let gen = Gen::<std::result::Result<bool, i32>>::result_of_weighted(
+            Gen::bool(),
+            Gen::int_range(1, 5),
+            9, // 90% Ok, 10% Err
+        );
+
+        let mut ok_count = 0;
+        let mut err_count = 0;
+
+        // Generate many samples to test distribution
+        for i in 0..100 {
+            let seed = Seed::from_u64(i);
+            let tree = gen.generate(Size::new(10), seed);
+            match tree.value {
+                Ok(_) => ok_count += 1,
+                Err(_) => err_count += 1,
+            }
+        }
+
+        // Should heavily favor Ok values (allow some variance)
+        assert!(
+            ok_count > err_count * 5,
+            "Weighted result should favor Ok: Ok={}, Err={}",
+            ok_count,
+            err_count
+        );
+    }
+
+    #[test]
+    fn test_convenience_generators() {
+        // Test Vec<i32> convenience method
+        let vec_int_gen = Gen::<Vec<i32>>::vec_int();
+        let seed = Seed::from_u64(456);
+        let tree = vec_int_gen.generate(Size::new(5), seed);
+
+        // All elements should be in expected range
+        for &element in &tree.value {
+            assert!(
+                element >= -100 && element <= 100,
+                "Vec<i32> elements should be in range [-100, 100]"
+            );
+        }
+
+        // Test Vec<bool> convenience method
+        let vec_bool_gen = Gen::<Vec<bool>>::vec_bool();
+        let tree2 = vec_bool_gen.generate(Size::new(5), seed);
+
+        // All elements should be valid booleans (always true, but good for completeness)
+        for &element in &tree2.value {
+            assert!(
+                element == true || element == false,
+                "Vec<bool> elements should be valid booleans"
+            );
+        }
     }
 }

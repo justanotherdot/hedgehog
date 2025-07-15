@@ -17,3 +17,7 @@ thiserror.workspace = true
 [[example]]
 name = "generators"
 path = "../examples/generators.rs"
+
+[[example]]
+name = "shrinking"
+path = "../examples/shrinking.rs"
