@@ -28,13 +28,34 @@ use hedgehog::*;
 
 #[test]
 fn prop_reverse() {
-    let gen = Gen::range(1..=100).vec(0..=20);
-    let result = check(gen, Config::default(), |xs| {
+    let gen = Gen::<Vec<i32>>::vec_of(Gen::int_range(1, 100));
+    let prop = for_all(gen, |xs: &Vec<i32>| {
         let reversed: Vec<_> = xs.iter().rev().cloned().collect();
         let double_reversed: Vec<_> = reversed.iter().rev().cloned().collect();
-        xs == double_reversed
+        *xs == double_reversed
     });
-    assert!(matches!(result, TestResult::Pass));
+    match prop.run(&Config::default()) {
+        TestResult::Pass => (), // Test passed
+        result => panic!("Property failed: {:?}", result),
+    }
+}
+```
+
+For larger codebases, you may prefer qualified imports:
+
+```rust
+use hedgehog::{for_all, Config, TestResult};
+use hedgehog::Gen;
+
+#[test] 
+fn prop_reverse_qualified() {
+    let gen = Gen::<Vec<i32>>::vec_of(Gen::int_range(1, 100));
+    let prop = for_all(gen, |xs: &Vec<i32>| {
+        let reversed: Vec<_> = xs.iter().rev().cloned().collect();
+        let double_reversed: Vec<_> = reversed.iter().rev().cloned().collect();
+        *xs == double_reversed
+    });
+    // ... rest of test
 }
 ```
 
@@ -46,9 +67,9 @@ Unlike type-directed approaches, Hedgehog generators are explicit values you cre
 
 ```rust
 // Explicit generator construction
-let gen_small_int = Gen::range(1..=10);
-let gen_list = Gen::list(gen_small_int, 0..=5);
-let gen_pair = Gen::zip(gen_small_int, gen_list);
+let gen_small_int = Gen::int_range(1, 10);
+let gen_list = Gen::<Vec<i32>>::vec_of(gen_small_int);
+let gen_pair = Gen::<(i32, String)>::tuple_of(gen_small_int, Gen::<String>::ascii_alpha());
 ```
 
 ### Integrated Shrinking
@@ -65,12 +86,47 @@ Shrinking is built into the generator, not separate. When a test fails, Hedgehog
 Build complex generators from simple ones using combinators:
 
 ```rust
-let gen_person = zip3(
-    Gen::string(1..=20),           // name
-    Gen::range(0..=120),           // age  
-    Gen::string(5..=30),           // email
-).map(|(name, age, email)| Person { name, age, email });
+// Build complex generators using map and tuple_of
+let gen_user_data = Gen::<(String, i32)>::tuple_of(
+    Gen::<String>::ascii_alpha(),     // username
+    Gen::int_range(18, 120)           // age
+);
+
+let gen_user = gen_user_data.map(|(username, age)| User { username, age });
 ```
+
+## Available Generators
+
+Hedgehog provides comprehensive generators with enhanced shrinking strategies:
+
+### Primitive Types
+- **Integers**: `Gen::int_range(min, max)` with origin-based shrinking
+- **Booleans**: `Gen::bool()` 
+- **Characters**: `Gen::<char>::ascii_alpha()`, `ascii_alphanumeric()`, `ascii_printable()`
+
+### Strings
+- **String generators**: `Gen::<String>::ascii_alpha()`, `ascii_alphanumeric()`, `ascii_printable()`
+- **Custom strings**: `Gen::<String>::string_of(char_gen)`
+- **Enhanced shrinking**: Character removal, simplification (uppercase→lowercase), substring removal
+
+### Collections
+- **Vectors**: `Gen::<Vec<T>>::vec_of(element_gen)`, `vec_int()`, `vec_bool()`
+- **Options**: `Gen::<Option<T>>::option_of(inner_gen)`
+- **Tuples**: `Gen::<(T, U)>::tuple_of(first_gen, second_gen)`
+- **Results**: `Gen::<Result<T, E>>::result_of(ok_gen, err_gen)`, `result_of_weighted()`
+
+### Generator Combinators
+- **Map**: Transform generated values with `.map(f)`
+- **Bind**: Dependent generation with `.bind(f)` 
+- **Filter**: Conditional generation with `.filter(predicate)`
+
+## Enhanced Shrinking
+
+All generators include sophisticated shrinking strategies:
+- **Integers**: Binary search towards meaningful origins (0, min, or max)
+- **Strings**: Character simplification and smart removal patterns
+- **Collections**: Element removal, element-wise shrinking, and empty container prioritization
+- **Containers**: Type-specific shrinking (Option→None, Result→Ok bias)
 
 ## In Memory of Jacob Stanley
 

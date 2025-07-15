@@ -1,6 +1,6 @@
 //! Basic example demonstrating Hedgehog property-based testing.
 
-use hedgehog_core::*;
+use hedgehog::*;
 
 fn main() {
     println!("Hedgehog Property-Based Testing Examples");

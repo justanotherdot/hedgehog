@@ -1,5 +1,23 @@
 # Hedgehog Rust API Sketch
 
+**⚠️ HISTORICAL DOCUMENT ⚠️**
+
+This document was written during early design phases (circa late 2024) as an initial API exploration. It represents theoretical design ideas and does not reflect any existing or future API surface area of the actual Hedgehog Rust implementation.
+
+**Author**: Early design exploration  
+**Purpose**: Initial brainstorming of possible API shapes  
+**Status**: Superseded by actual implementation  
+
+**For current API documentation, see:**
+- `examples/basic.rs` - Working examples
+- `examples/generators.rs` - All available generators  
+- `README.md` - Quick start and current API
+- Unit tests in `hedgehog-core/src/gen.rs`
+
+---
+
+# Original Sketch Content
+
 ## Core Types
 
 ```rust
