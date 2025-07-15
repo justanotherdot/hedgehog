@@ -1,0 +1,10 @@
+[1;96mProperty Tests Discovered[0m
+[96m========================[0m
+
+  [92mtest_derive_property_based[0m[93m[0m
+    [94m../hedgehog/tests/derive-macro-test.rs[0m
+
+  [92mtest_derive_shrinking[0m[93m[0m
+    [94m../hedgehog/tests/derive-macro-test.rs[0m
+
+Total: [1;92m2[0m property tests found

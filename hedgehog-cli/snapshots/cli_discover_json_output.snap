@@ -1,0 +1,17 @@
+{
+  "properties": [
+    {
+      "file_path": "../hedgehog/tests/derive-macro-test.rs",
+      "is_async": false,
+      "line_number": 1,
+      "name": "test_derive_property_based"
+    },
+    {
+      "file_path": "../hedgehog/tests/derive-macro-test.rs",
+      "is_async": false,
+      "line_number": 1,
+      "name": "test_derive_shrinking"
+    }
+  ],
+  "total": 2
+}

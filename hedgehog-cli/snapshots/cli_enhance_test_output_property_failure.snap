@@ -1,0 +1,4 @@
+FAIL: [91mProperty failed with counterexample[0m
+COUNTER: [96mCounterexample: (0, "test")[0m
+SHRINK: [95mShrinks performed: 15[0m
+Minimal counterexample found

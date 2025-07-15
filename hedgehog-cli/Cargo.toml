@@ -1,0 +1,34 @@
+[package]
+name = "hedgehog-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "CLI tool for enhanced Hedgehog property testing"
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "cargo-hedgehog"
+path = "src/main.rs"
+
+[dependencies]
+hedgehog-core = { path = "../hedgehog-core" }
+clap = { version = "4.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+colored = "2.0"
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+atty = "0.2"
+syn = { version = "2.0", features = ["full"] }
+quote = "1.0"
+walkdir = "2.3"
+regex = "1.0"
+tempfile = "3.8"
+
+[dev-dependencies]
+archetype = "0.2"

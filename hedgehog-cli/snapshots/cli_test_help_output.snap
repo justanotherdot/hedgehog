@@ -1,0 +1,11 @@
+Run property tests (default)
+
+Usage: cargo hedgehog test [OPTIONS]
+
+Options:
+  -t, --test <TEST>  Test name pattern to run
+  -v, --verbose      Enable verbose output
+      --show-all     Show all generated values (very verbose)
+      --derive       Enable derive feature
+      --release      Run tests in release mode
+  -h, --help         Print help

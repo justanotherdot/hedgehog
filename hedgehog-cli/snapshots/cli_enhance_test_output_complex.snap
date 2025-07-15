@@ -1,0 +1,8 @@
+SEARCH: [93mforAll 0 = 42[0m
+FAIL: [91mProperty failed with counterexample[0m
+COUNTER: [96mCounterexample: 42[0m
+SHRINK: [95mShrinks performed: 3[0m
+PASS: [92m✓ Property passed[0m
+
+Compilation errors:
+[91mwarning: unused variable[0m
