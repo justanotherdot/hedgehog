@@ -23,9 +23,31 @@ name = "basic"
 path = "../examples/basic.rs"
 
 [[example]]
-name = "distribution_shaping"
-path = "../examples/distribution_shaping.rs"
+name = "distribution-shaping"
+path = "../examples/distribution-shaping.rs"
 
 [[example]]
-name = "variable_name_tracking"
-path = "../examples/variable_name_tracking.rs"
+name = "variable-name-tracking"
+path = "../examples/variable-name-tracking.rs"
+
+[[example]]
+name = "derive-macro"
+path = "../examples/derive-macro.rs"
+required-features = ["derive"]
+
+[[example]]
+name = "derive-simple"
+path = "../examples/derive-simple.rs"
+required-features = ["derive"]
+
+[[example]]
+name = "generators"
+path = "../examples/generators.rs"
+
+[[example]]
+name = "shrinking"
+path = "../examples/shrinking.rs"
+
+[[example]]
+name = "tree-output"
+path = "../examples/tree-output.rs"

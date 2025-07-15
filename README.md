@@ -11,6 +11,7 @@ Property-based testing library for Rust, inspired by the original [Hedgehog](htt
 - **Excellent debugging** - Minimal counterexamples with rich failure reporting
 - **Distribution shaping** - Control probability distributions for realistic test data
 - **Variable name tracking** - Enhanced failure reporting with named inputs
+- **Derive macros** - Automatic generator creation for custom types
 
 ## Quick Start
 
@@ -19,6 +20,9 @@ Add to your `Cargo.toml`:
 ```toml
 [dev-dependencies]
 hedgehog = "0.1"
+
+# For derive macros
+hedgehog = { version = "0.1", features = ["derive"] }
 ```
 
 ### Basic Property Test
@@ -94,6 +98,42 @@ fn prop_http_status_codes() {
 }
 ```
 
+### Automatic Generator Creation
+
+```rust
+use hedgehog::*;
+use hedgehog_derive::Generate;
+
+#[derive(Generate, Debug, Clone)]
+struct User {
+    name: String,
+    age: u32,
+    active: bool,
+}
+
+#[derive(Generate, Debug, Clone)]
+enum PaymentMethod {
+    Cash,
+    Card { number: String, expiry: String },
+    Digital(String),
+}
+
+#[test]
+fn prop_user_validation() {
+    let prop = for_all_named(User::generate(), "user", |user: &User| {
+        !user.name.is_empty() && user.age <= 100
+    });
+    
+    match prop.run(&Config::default()) {
+        TestResult::Pass { .. } => println!("✓ User validation passed"),
+        TestResult::Fail { counterexample, .. } => {
+            println!("✗ Failed with user: {}", counterexample);
+        }
+        result => println!("Unexpected result: {:?}", result),
+    }
+}
+```
+
 ## Key Features
 
 ### Explicit Generators
@@ -164,6 +204,7 @@ When a test fails, Hedgehog automatically finds the minimal counterexample:
 - **[API Guide](docs/api-guide.md)** - Comprehensive API reference and examples
 - **[Distribution Shaping](docs/distribution-shaping.md)** - Control probability distributions for realistic test data
 - **[Variable Name Tracking](docs/variable-name-tracking.md)** - Enhanced failure reporting with named inputs
+- **[Derive Macros](docs/derive-macros.md)** - Automatic generator creation for custom types
 - **[Roadmap](docs/roadmap.md)** - Development plan and project status
 
 ## Examples
@@ -172,13 +213,16 @@ Run the examples to see Hedgehog in action:
 
 ```bash
 # Distribution shaping examples
-cargo run --example distribution_shaping
+cargo run --example distribution-shaping
 
 # Variable name tracking examples  
-cargo run --example variable_name_tracking
+cargo run --example variable-name-tracking
 
 # Basic usage examples
 cargo run --example basic
+
+# Derive macro examples
+cargo run --example derive-macro --features derive
 ```
 
 ## In Memory of Jacob Stanley

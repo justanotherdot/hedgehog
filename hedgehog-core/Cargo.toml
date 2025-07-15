@@ -17,14 +17,3 @@ thiserror.workspace = true
 [dev-dependencies]
 archetype = "0.2"
 
-[[example]]
-name = "generators"
-path = "../examples/generators.rs"
-
-[[example]]
-name = "shrinking"
-path = "../examples/shrinking.rs"
-
-[[example]]
-name = "tree-output"
-path = "../examples/tree_output.rs"
