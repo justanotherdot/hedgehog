@@ -13,7 +13,7 @@ fn main() {
         v.iter().all(|&x| x >= -10 && x <= 10)
     });
     match vec_prop.run(&Config::default().with_tests(50)) {
-        TestResult::Pass => println!("Vector bounds property passed"),
+        TestResult::Pass { .. } => println!("Vector bounds property passed"),
         result => println!("Vector bounds property failed: {:?}", result),
     }
 
@@ -24,7 +24,7 @@ fn main() {
         v.iter().all(|&x| x >= -100 && x <= 100)
     });
     match vec_int_prop.run(&Config::default().with_tests(50)) {
-        TestResult::Pass => println!("Vec<i32> convenience property passed"),
+        TestResult::Pass { .. } => println!("Vec<i32> convenience property passed"),
         result => println!("Vec<i32> convenience property failed: {:?}", result),
     }
 
@@ -35,7 +35,7 @@ fn main() {
         v.iter().all(|&b| b == true || b == false)
     });
     match vec_bool_prop.run(&Config::default().with_tests(50)) {
-        TestResult::Pass => println!("Vec<bool> convenience property passed"),
+        TestResult::Pass { .. } => println!("Vec<bool> convenience property passed"),
         result => println!("Vec<bool> convenience property failed: {:?}", result),
     }
     println!();
@@ -48,7 +48,7 @@ fn main() {
         Some(x) => *x >= 1 && *x <= 100,
     });
     match option_prop.run(&Config::default().with_tests(50)) {
-        TestResult::Pass => println!("Option<i32> bounds property passed"),
+        TestResult::Pass { .. } => println!("Option<i32> bounds property passed"),
         result => println!("Option<i32> bounds property failed: {:?}", result),
     }
 
@@ -60,7 +60,7 @@ fn main() {
     });
     match option_some_prop.run(&Config::default().with_tests(100)) {
         TestResult::Fail { .. } => println!("Option produces None values (expected failure)"),
-        TestResult::Pass => println!("WARNING: Option generator only produced Some values"),
+        TestResult::Pass { .. } => println!("WARNING: Option generator only produced Some values"),
         result => println!("Unexpected result: {:?}", result),
     }
     println!();
@@ -72,7 +72,7 @@ fn main() {
         *x >= -50 && *x <= 50 && (*b == true || *b == false)
     });
     match tuple_prop.run(&Config::default().with_tests(50)) {
-        TestResult::Pass => println!("Tuple (i32, bool) property passed"),
+        TestResult::Pass { .. } => println!("Tuple (i32, bool) property passed"),
         result => println!("Tuple (i32, bool) property failed: {:?}", result),
     }
 
@@ -88,7 +88,7 @@ fn main() {
         })
     });
     match nested_prop.run(&Config::default().with_tests(30)) {
-        TestResult::Pass => println!("Nested Vec<Option<String>> property passed"),
+        TestResult::Pass { .. } => println!("Nested Vec<Option<String>> property passed"),
         result => println!("Nested Vec<Option<String>> property failed: {:?}", result),
     }
 
@@ -103,7 +103,7 @@ fn main() {
             && string.chars().all(|c| c.is_ascii_alphanumeric())
     });
     match complex_tuple_prop.run(&Config::default().with_tests(30)) {
-        TestResult::Pass => println!("Complex tuple (Vec<i32>, String) property passed"),
+        TestResult::Pass { .. } => println!("Complex tuple (Vec<i32>, String) property passed"),
         result => println!(
             "Complex tuple (Vec<i32>, String) property failed: {:?}",
             result
@@ -121,7 +121,7 @@ fn main() {
         Err(s) => s.chars().all(|c| c.is_ascii_alphabetic()),
     });
     match result_prop.run(&Config::default().with_tests(50)) {
-        TestResult::Pass => println!("Result<i32, String> property passed"),
+        TestResult::Pass { .. } => println!("Result<i32, String> property passed"),
         result => println!("Result<i32, String> property failed: {:?}", result),
     }
 
@@ -134,7 +134,7 @@ fn main() {
     });
     match result_ok_prop.run(&Config::default().with_tests(100)) {
         TestResult::Fail { .. } => println!("Result produces Err values (expected failure)"),
-        TestResult::Pass => println!("WARNING: Result generator only produced Ok values"),
+        TestResult::Pass { .. } => println!("WARNING: Result generator only produced Ok values"),
         result => println!("Unexpected result: {:?}", result),
     }
 
@@ -155,7 +155,7 @@ fn main() {
         },
     );
     match weighted_result_prop.run(&Config::default().with_tests(30)) {
-        TestResult::Pass => println!("Weighted Result generator property passed"),
+        TestResult::Pass { .. } => println!("Weighted Result generator property passed"),
         result => println!("Weighted Result generator property failed: {:?}", result),
     }
 
