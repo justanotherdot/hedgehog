@@ -1,8 +1,0 @@
-running 1 test
-
-Compilation errors:
-[91merror[E0425]: cannot find value `undefined_var` in this scope
-  --> src/lib.rs:10:5
-   |
-10 |     undefined_var
-   |     ^^^^^^^^^^^^^ not found in this scope[0m

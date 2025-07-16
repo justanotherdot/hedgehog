@@ -1,7 +1,0 @@
-Show test coverage
-
-Usage: cargo hedgehog coverage [OPTIONS]
-
-Options:
-  -d, --detailed  Show detailed coverage per property
-  -h, --help      Print help
