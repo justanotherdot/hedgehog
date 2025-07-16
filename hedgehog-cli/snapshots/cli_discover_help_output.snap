@@ -1,8 +1,0 @@
-Discover property tests in the current project
-
-Usage: cargo hedgehog discover [OPTIONS]
-
-Options:
-  -p, --path <PATH>      Directory to search for tests [default: .]
-  -f, --format <FORMAT>  Output format (list, json) [default: list]
-  -h, --help             Print help

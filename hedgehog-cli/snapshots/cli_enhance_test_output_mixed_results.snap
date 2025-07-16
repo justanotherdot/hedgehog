@@ -1,6 +1,0 @@
-PASS: [92m✓ Property passed[0m
-SEARCH: [93mforAll 1 = 100[0m
-FAIL: [91mProperty failed with counterexample[0m
-PASS: [92m✓ Another property passed[0m
-COUNTER: [96mCounterexample: -5[0m
-SHRINK: [95mShrinks performed: 8[0m
