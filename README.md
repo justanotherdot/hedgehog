@@ -134,32 +134,6 @@ fn prop_user_validation() {
 }
 ```
 
-## Command Line Interface
-
-Hedgehog includes a powerful CLI for enhanced testing workflows:
-
-```sh
-# Install the CLI
-cargo install --path hedgehog-cli
-
-# Run property tests with enhanced output
-cargo hedgehog test --verbose --count 500
-
-# Generate reports in multiple formats
-cargo hedgehog report --format json --output test-report.json
-
-# Check test coverage
-cargo hedgehog coverage --detailed
-```
-
-The CLI provides:
-- **Enhanced output formatting** with color-coded test results
-- **Multiple report formats** (JSON, HTML, markdown)
-- **Test coverage analysis** showing property test coverage
-- **Configurable test parameters** (count, patterns, features)
-
-See [hedgehog-cli/README.md](hedgehog-cli/README.md) for detailed CLI documentation.
-
 ## Key Features
 
 ### Explicit Generators

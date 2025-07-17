@@ -1,242 +1,225 @@
-# Hedgehog Rust Port Implementation Ideas
+# Ideas for Future Hedgehog Features
 
-## Closure-Based Generators
+This document captures ideas for extending Hedgehog's capabilities, inspired by other property testing and fuzzing tools.
 
-The core insight is that generators are naturally functions, and closures might be the right abstraction for Rust.
+## High Impact Features
 
-### Why Closures Could Work
+### 1. Regression Corpus
+**Status**: Already documented in `regression-corpus.md`
+**Inspiration**: PropTest's regression files
+**Benefit**: Faster regression detection, deterministic replay
 
-1. **Generators are functions** - At its core, a generator is `Size -> Seed -> Tree<T>`, which is naturally a closure
-2. **Composability** - Closures can be composed: `Gen::map(gen, |x| f(x))` stores the closure for later execution  
-3. **Lazy by nature** - Closures don't execute until called, giving us the lazy evaluation we need
-4. **First-class values** - Closures are values you can pass around, store, and compose
-
-### Potential Structure
-
+### 2. Coverage-Guided Generation
+**Inspiration**: Hypothesis, FuzzCheck
+**What**: Use code coverage feedback to guide input generation towards unexplored code paths
+**Implementation**: 
+- Instrument code during compilation
+- Track which branches/lines are hit by each generated input
+- Bias generation towards inputs that discover new coverage
 ```rust
-struct Gen<T> {
-    // Something like: Box<dyn Fn(Size, Seed) -> Tree<T>>
-}
+let prop = for_all(Gen::string().coverage_guided(), |s| {
+    // Generator adapts based on which inputs explore new code
+    parse_function(s).is_ok()
+});
+```
 
-struct Tree<T> {
-    value: T,
-    children: Box<dyn Fn() -> Vec<Tree<T>>>,  // Lazy children via closure
+### 3. Example Integration
+**Inspiration**: Hypothesis `@example` decorator
+**What**: Mix explicit test cases with generated ones
+```rust
+#[test]
+fn test_parsing() {
+    let prop = for_all(Gen::string(), |s| parse(s).is_ok() || parse(s).is_err())
+        .with_examples(&["", "null", "true", "false", "{}", "[]"]);
+    // Always tests the examples first, then generates random inputs
 }
 ```
 
-### Why the Previous Rust Port Failed with Closures
-
-- They used `Rc<RefCell<T>>` for sharing
-- They tried to make everything lazy with complex lifetime management  
-- They fought the ownership system instead of working with it
-
-### What Might Work Better
-
-- **Owned closures** (`Box<dyn Fn>`) instead of shared ones
-- **Simple value generation, lazy shrinking** - don't over-complicate
-- **Embrace move semantics** instead of complex sharing
-
-### Key Insight
-
-Use **closures for the generator functions themselves, not for complex lazy data structures**. 
-
-The generator is the closure, the tree structure can be simpler:
-
+### 4. Dictionary Support
+**Inspiration**: AFL, libFuzzer
+**What**: Domain-specific token injection for more realistic inputs
 ```rust
-struct Gen<T> {
-    generator: Box<dyn Fn(Size, Seed) -> Tree<T>>,
-}
+let json_dict = Dictionary::new()
+    .add_tokens(&["null", "true", "false"])
+    .add_tokens(&["{", "}", "[", "]", ":", ","])
+    .add_strings(&["\"hello\"", "\"world\""]);
 
-impl<T> Gen<T> {
-    fn map<U>(self, f: impl Fn(T) -> U + 'static) -> Gen<U> {
-        Gen {
-            generator: Box::new(move |size, seed| {
-                let tree = (self.generator)(size, seed);
-                Tree {
-                    value: f(tree.value),
-                    children: Box::new(move || {
-                        tree.children().into_iter()
-                            .map(|child| Tree {
-                                value: f(child.value),
-                                children: child.children,
-                            })
-                            .collect()
-                    }),
-                }
-            }),
-        }
+let prop = for_all(Gen::string().with_dictionary(json_dict), |s| {
+    // More likely to generate JSON-like strings
+    json_parser(s)
+});
+```
+
+### 5. Function Generators
+**Inspiration**: QuickCheck's `CoArbitrary`
+**What**: Generate functions as test inputs
+```rust
+let prop = for_all((Gen::function(Gen::int(), Gen::bool()), Gen::int()), |(f, x)| {
+    // f is a generated function from int -> bool
+    let result1 = f(x);
+    let result2 = f(x);
+    result1 == result2 // Functions should be deterministic
+});
+
+// Use case: Testing higher-order functions
+let prop = for_all(
+    (Gen::vec_int(), Gen::function(Gen::int(), Gen::bool())),
+    |(vec, predicate)| {
+        let filtered: Vec<_> = vec.iter().filter(|&x| predicate(*x)).collect();
+        filtered.len() <= vec.len()
     }
-}
+);
 ```
 
-This preserves:
-- **Explicit generators** as first-class values
-- **Compositional** nature through combinator methods
-- **Lazy evaluation** through closure-based children
-- **No type-directed magic** - you explicitly choose and compose generators
-
-## Tree Structure Ideas
-
-### Option 1: Closure-Based Lazy Children
+### 6. Property Classification
+**Inspiration**: QuickCheck's `classify` and `collect`
+**What**: See distribution of generated test data
 ```rust
-struct Tree<T> {
-    value: T,
-    children: Box<dyn Fn() -> Vec<Tree<T>>>,
-}
+let prop = for_all(Gen::vec_int(), |vec| {
+    // Automatically track what kinds of inputs we're testing
+    vec.reverse();
+    vec.reverse();
+    vec // Original vector
+}).classify("empty", |vec| vec.is_empty())
+  .classify("small", |vec| vec.len() < 10)
+  .classify("large", |vec| vec.len() > 100)
+  .collect("length", |vec| vec.len());
+
+// Output shows: "80% empty, 15% small, 5% large, avg length: 3.2"
 ```
 
-### Option 2: Iterator-Based Lazy Children
+## Medium Impact Features
+
+### 7. Compositional Strategies
+**Inspiration**: PropTest's strategy composition
+**What**: Better ways to combine and compose generators
 ```rust
-struct Tree<T> {
-    value: T,
-    children: Box<dyn Iterator<Item = Tree<T>>>,
-}
-```
+// Current approach
+let gen = Gen::tuple_of(Gen::string(), Gen::int_range(0, 100));
 
-### Option 3: Streaming Children
-```rust
-struct Tree<T> {
-    value: T,
-    children: Box<dyn FnMut() -> Option<Tree<T>>>,
-}
-```
-
-## Generation Strategy
-
-### Size and Seed Handling
-- Pass `Size` and `Seed` explicitly through the generator chain
-- Use `Size` for recursive structure scaling
-- Use `Seed` splitting for deterministic randomness
-
-### Shrinking Strategy
-- Build shrink trees during generation, not afterwards
-- Use closure-based lazy evaluation for shrink children
-- Preserve generator invariants during shrinking
-
-## Traits with Generics Alternative
-
-Could we use traits with generics to avoid type-direction while still getting abstraction?
-
-### Approach 1: Generic Trait Methods
-```rust
-trait Generator {
-    fn generate<T>(&self, size: Size, seed: Seed) -> Tree<T>;
-    fn map<T, U>(self, f: impl Fn(T) -> U) -> Self where Self: Sized;
-}
-
-struct IntGen { range: Range<i32> }
-struct ListGen<G> { element_gen: G, length: Range<usize> }
-
-// Usage - still explicit!
-let gen = IntGen { range: 1..=10 }
-    .map(|x| x * 2)
-    .into_list(0..=5);
-```
-
-### Approach 2: Parameterized Generators
-```rust
-trait Generator<T> {
-    fn generate(&self, size: Size, seed: Seed) -> Tree<T>;
-}
-
-struct RangeGen<T> { range: Range<T> }
-struct MapGen<G, T, U> { inner: G, f: fn(T) -> U }
-
-impl<T> Generator<T> for RangeGen<T> {
-    fn generate(&self, size: Size, seed: Seed) -> Tree<T> { /* ... */ }
-}
-
-// Usage - still explicit, but typed
-let gen: RangeGen<i32> = RangeGen { range: 1..=10 };
-let mapped = MapGen { inner: gen, f: |x| x * 2 };
-```
-
-### Approach 3: Generator Combinators
-```rust
-trait Generator<T> {
-    fn generate(&self, size: Size, seed: Seed) -> Tree<T>;
-    
-    fn map<U>(self, f: impl Fn(T) -> U + 'static) -> MapGen<Self, T, U> 
-    where Self: Sized 
+// Enhanced compositional approach
+let user_gen = prop_compose! {
+    fn user_strategy()
+        (name in Gen::string().ascii_alpha())
+        (age in 0..100)
+        (email in format!("{}@example.com", name))
+        -> User 
     {
-        MapGen { inner: self, f: Box::new(f) }
+        User { name, age, email }
     }
-    
-    fn bind<U>(self, f: impl Fn(T) -> Box<dyn Generator<U>> + 'static) -> BindGen<Self, T, U>
-    where Self: Sized
-    {
-        BindGen { inner: self, f: Box::new(f) }
-    }
-}
-
-// Usage
-let gen = RangeGen { range: 1..=10 }
-    .map(|x| x * 2)
-    .bind(|x| Box::new(RangeGen { range: 0..=x }));
+};
 ```
 
-### Does This Avoid Type-Direction?
-
-**Yes, potentially!** The key differences from QuickCheck:
-
-1. **Explicit construction** - You still explicitly create `RangeGen { range: 1..=10 }`
-2. **No inference magic** - No hidden type class instances
-3. **Multiple generators per type** - Can have `RangeGen<i32>` and `ChoiceGen<i32>` 
-4. **Compositional** - Built through explicit combinator chains
-
-### Trade-offs
-
-**Pros:**
-- Zero-cost abstractions (no `Box<dyn Fn>`)
-- Type safety with explicit generators
-- Familiar Rust patterns
-- Good performance (static dispatch)
-
-**Cons:**
-- More complex types (`MapGen<BindGen<RangeGen<i32>, i32, String>, String, bool>`)
-- Lifetime management with closures in traits
-- May need trait objects for storage anyway
-
-### Hybrid Approach?
-
-Maybe combine both:
+### 8. Custom Shrinking Strategies
+**Inspiration**: PropTest's per-type shrinking
+**What**: Different shrinking approaches for different types
 ```rust
-trait Generator<T> {
-    fn generate(&self, size: Size, seed: Seed) -> Tree<T>;
-}
-
-struct Gen<T> {
-    generator: Box<dyn Generator<T>>,
-}
-
-impl<T> Gen<T> {
-    fn from_range(range: Range<T>) -> Self {
-        Gen { generator: Box::new(RangeGen { range }) }
-    }
-    
-    fn map<U>(self, f: impl Fn(T) -> U + 'static) -> Gen<U> {
-        Gen { generator: Box::new(MapGen { inner: self.generator, f: Box::new(f) }) }
+impl Shrinkable for CustomType {
+    fn shrink_strategy() -> ShrinkStrategy {
+        ShrinkStrategy::new()
+            .prefer_smaller_fields()
+            .try_removing_optional_fields()
+            .try_simplifying_nested_types()
     }
 }
-
-// Usage - explicit and ergonomic
-let gen = Gen::from_range(1..=10)
-    .map(|x| x * 2)
-    .bind(|x| Gen::from_range(0..=x));
 ```
 
-## Open Questions
+### 9. Parallel Property Testing
+**Inspiration**: Quviq QuickCheck
+**What**: Find race conditions and concurrency bugs
+```rust
+let prop = for_all_parallel(
+    Gen::vec_of(Gen::int()),
+    |shared_data| {
+        // Run multiple threads operating on shared_data
+        // Find race conditions automatically
+    }
+);
+```
 
-1. **Lifetime management** - How do we handle lifetimes with closures?
-2. **Performance** - Will `Box<dyn Fn>` be efficient enough?
-3. **Composition** - How do we handle complex generator composition?
-4. **Determinism** - How do we ensure reproducible generation with closures?
-5. **Trait approach** - Do traits with generics give us the best of both worlds?
+### 10. Fault Injection Testing
+**Inspiration**: Quviq QuickCheck
+**What**: Systematically inject failures
+```rust
+let prop = for_all(Gen::network_request(), |req| {
+    with_fault_injection(|| {
+        // Randomly inject network failures, timeouts, etc.
+        make_request(req)
+    })
+});
+```
 
-## Next Steps
+### 11. Temporal Properties
+**Inspiration**: Quviq QuickCheck
+**What**: Properties over sequences of operations
+```rust
+let prop = temporal_property! {
+    always(eventually(response_received)) &&
+    never(duplicate_request) &&
+    until(timeout, retries_increase)
+};
+```
 
-1. Prototype a simple closure-based generator
-2. Test performance compared to type-directed approaches
-3. Implement basic combinators (map, bind, choice)
-4. Build a simple shrinking system
-5. Compare with QuickCheck for ergonomics and performance
+## Lower Priority Features
+
+### 12. Binary Instrumentation
+**Inspiration**: AFL
+**What**: Fuzz binaries without source code access
+**Use case**: Testing closed-source libraries or C bindings
+
+### 13. Distributed Fuzzing
+**Inspiration**: AFL++
+**What**: Coordinate fuzzing across multiple machines
+**Use case**: Large-scale continuous fuzzing in CI/CD
+
+### 14. Structure-Aware Mutations
+**Inspiration**: FuzzCheck
+**What**: Intelligent mutations that understand data structure
+```rust
+// Instead of random byte flipping, understand that this is JSON
+// and make valid JSON mutations like adding/removing keys
+```
+
+### 15. Interactive Debugging
+**What**: Step through shrinking process, examine intermediate values
+```rust
+// Debug mode that shows each shrinking step
+prop.run_debug() // Opens interactive debugger
+```
+
+## Implementation Priority
+
+**Phase 1** (High value, lower complexity):
+1. Example integration
+2. Dictionary support  
+3. Property classification
+4. Function generators
+
+**Phase 2** (High value, medium complexity):
+5. Coverage-guided generation
+6. Compositional strategies
+7. Custom shrinking strategies
+
+**Phase 3** (Medium value, higher complexity):
+8. Parallel testing
+9. Fault injection
+10. Temporal properties
+
+**Future** (Specialized use cases):
+11. Binary instrumentation
+12. Distributed fuzzing
+13. Structure-aware mutations
+14. Interactive debugging
+
+## Notes
+
+- **Function generators** are particularly interesting as they enable testing higher-order functions and callbacks
+- **Dictionary support** could be very valuable for protocol testing, parser testing, etc.
+- **Coverage-guided generation** could significantly improve test effectiveness
+- Many of these features could be implemented as separate crates that build on hedgehog-core
+
+Each feature should be evaluated based on:
+- **Developer demand** - What do users actually need?
+- **Implementation complexity** - How much work is involved?
+- **Maintenance burden** - How much ongoing work?
+- **Ecosystem fit** - How well does it work with existing Rust testing tools?

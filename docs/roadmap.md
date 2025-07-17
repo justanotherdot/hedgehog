@@ -10,25 +10,42 @@
 
 ## Next Priorities
 
-1. **Custom CLI Tool** (cargo-hedgehog)
-   - Property test runner with better output
-   - Integration with existing test frameworks
+**Note**: Based on implementation velocity, these features can be completed in 2-3 weeks total.
 
-2. **Performance & Benchmarking**
+1. **Core Extensions** (Week 1: 3-4 days)
+   - Example integration - mix explicit examples with generated tests
+   - Property classification - see distribution of test data
+   - Dictionary support - domain-specific token injection
+
+2. **Major Features** (Week 2: 1 week)
+   - State machine testing - test stateful systems systematically
+   - Function generators - generate functions as test inputs
+   - Coverage-guided generation - use coverage feedback
+
+3. **Advanced Features** (Week 3: 1-2 weeks)
+   - Regression corpus - automatic failure persistence
+   - Parallel testing - find race conditions
+   - Fault injection - systematic failure testing
+
+4. **Performance & Benchmarking**
    - Optimize generator performance
    - Benchmark against other property testing libraries
 
-3. **Additional Generators**
+5. **Additional Generators**
    - Date/time generators
    - Network/protocol generators
    - File system generators
+
+6. **Documentation & Examples**
+   - Comprehensive user guide
+   - Real-world examples and tutorials
 
 ## Future Considerations
 
 - **Attribute Customization** for derive macros
 - **Generic Type Support** in derive macros
 - **State Machine Testing** utilities
-- **Regression Writing** - save failing cases to files for deterministic replay
+- **Regression Corpus** - save failing cases to a corpus file that gets tried first on subsequent runs (similar to proptest's approach)
 - **Custom RNG Support**
 
 ## Non-Goals
