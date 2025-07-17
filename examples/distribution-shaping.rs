@@ -16,7 +16,8 @@ fn main() {
     let weighted_gen = Gen::frequency(vec![
         WeightedChoice::new(1, Gen::constant(0)),      // 10% zeros
         WeightedChoice::new(9, Gen::int_range(1, 10)), // 90% small positive
-    ]);
+    ])
+    .expect("valid frequency generator");
 
     println!("   Generated values:");
     for i in 0..10 {
@@ -128,7 +129,8 @@ fn main() {
     let non_empty_strings = Gen::frequency(vec![
         WeightedChoice::new(1, Gen::constant(String::new())), // 5% empty
         WeightedChoice::new(19, Gen::<String>::alpha_with_range(Range::linear(1, 20))), // 95% non-empty
-    ]);
+    ])
+    .expect("valid frequency generator");
 
     let string_length_prop = for_all(non_empty_strings, |s: &String| {
         // This property would fail more often with naive string generation
@@ -157,7 +159,8 @@ fn main() {
         Gen::constant("red"),
         Gen::constant("green"),
         Gen::constant("blue"),
-    ]);
+    ])
+    .expect("valid one_of generator");
 
     println!("   Color choices:");
     for i in 0..8 {
