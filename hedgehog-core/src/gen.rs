@@ -152,22 +152,8 @@ where
     /// This is similar to QuickCheck's `frequency` and Haskell Hedgehog's weighted choice.
     /// Higher weights make choices more likely to be selected.
     ///
-    /// # Panics
-    /// This function will panic if the choices list is empty or all weights are zero.
-    /// For a non-panicking version, use `try_frequency`.
-    pub fn frequency(choices: Vec<WeightedChoice<T>>) -> Gen<T>
-    where
-        T: Clone,
-    {
-        Self::try_frequency(choices).unwrap_or_else(|err| {
-            panic!("frequency: {}", err);
-        })
-    }
-
-    /// Generate values using weighted frequency distribution.
-    ///
     /// Returns an error if the choices list is empty or all weights are zero.
-    pub fn try_frequency(choices: Vec<WeightedChoice<T>>) -> crate::Result<Gen<T>>
+    pub fn frequency(choices: Vec<WeightedChoice<T>>) -> crate::Result<Gen<T>>
     where
         T: Clone,
     {
@@ -208,7 +194,8 @@ where
     /// Generate values using one of the given generators with equal probability.
     ///
     /// This is equivalent to `frequency` with all weights equal to 1.
-    pub fn one_of(generators: Vec<Gen<T>>) -> Gen<T>
+    /// Returns an error if the generators list is empty.
+    pub fn one_of(generators: Vec<Gen<T>>) -> crate::Result<Gen<T>>
     where
         T: Clone,
     {
@@ -1386,7 +1373,8 @@ mod tests {
         let gen = Gen::frequency(vec![
             WeightedChoice::new(1, Gen::constant(0)),       // 10% zeros
             WeightedChoice::new(9, Gen::int_range(1, 100)), // 90% positive
-        ]);
+        ])
+        .expect("valid frequency generator");
 
         let tree = gen.generate(Size::new(10), Seed::from_u64(42));
 
@@ -1443,12 +1431,54 @@ mod tests {
             Gen::constant("hello"),
             Gen::constant("world"),
             Gen::constant("test"),
-        ]);
+        ])
+        .expect("valid one_of generator");
 
         let tree = gen.generate(Size::new(10), Seed::from_u64(42));
 
         // Should generate one of the three values
         assert!(tree.value == "hello" || tree.value == "world" || tree.value == "test");
+    }
+
+    #[test]
+    fn test_frequency_errors() {
+        // Test empty choices list
+        let result = Gen::<String>::frequency(vec![]);
+        assert!(matches!(
+            result,
+            Err(crate::HedgehogError::InvalidGenerator { .. })
+        ));
+
+        // Test zero total weight
+        let result = Gen::frequency(vec![
+            WeightedChoice::new(0, Gen::constant("a")),
+            WeightedChoice::new(0, Gen::constant("b")),
+        ]);
+        assert!(matches!(
+            result,
+            Err(crate::HedgehogError::InvalidGenerator { .. })
+        ));
+
+        // Test valid case
+        let result = Gen::frequency(vec![
+            WeightedChoice::new(1, Gen::constant("a")),
+            WeightedChoice::new(2, Gen::constant("b")),
+        ]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_one_of_errors() {
+        // Test empty generators list
+        let result = Gen::<String>::one_of(vec![]);
+        assert!(matches!(
+            result,
+            Err(crate::HedgehogError::InvalidGenerator { .. })
+        ));
+
+        // Test valid case
+        let result = Gen::one_of(vec![Gen::constant("a"), Gen::constant("b")]);
+        assert!(result.is_ok());
     }
 
     #[test]
