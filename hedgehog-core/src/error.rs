@@ -25,6 +25,10 @@ pub enum HedgehogError {
     /// Invalid configuration.
     #[error("Invalid configuration: {message}")]
     InvalidConfig { message: String },
+
+    /// Invalid generator construction.
+    #[error("Invalid generator: {message}")]
+    InvalidGenerator { message: String },
 }
 
 /// Result type for Hedgehog operations.
@@ -42,13 +46,21 @@ pub struct ShrinkStep {
 }
 
 /// Outcome of a property test.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TestResult {
     /// Test passed successfully.
     Pass {
         tests_run: usize,
         property_name: Option<String>,
         module_path: Option<String>,
+    },
+
+    /// Test passed successfully with statistics.
+    PassWithStatistics {
+        tests_run: usize,
+        property_name: Option<String>,
+        module_path: Option<String>,
+        statistics: crate::property::TestStatistics,
     },
 
     /// Test failed with a counterexample.
@@ -86,6 +98,78 @@ impl fmt::Display for TestResult {
 
                 let prop_name = property_name.as_deref().unwrap_or("property");
                 write!(f, "  ✓ {} passed {} tests.", prop_name, tests_run)
+            }
+            TestResult::PassWithStatistics {
+                tests_run,
+                property_name,
+                module_path,
+                statistics,
+            } => {
+                // Show module header if available
+                if let Some(module) = module_path {
+                    writeln!(f, "━━━ {} ━━━", module)?;
+                }
+
+                let prop_name = property_name.as_deref().unwrap_or("property");
+                writeln!(f, "  ✓ {} passed {} tests.", prop_name, tests_run)?;
+
+                // Show classification distribution
+                if !statistics.classifications.is_empty() {
+                    writeln!(f)?;
+                    writeln!(f, "  Test data distribution:")?;
+                    let mut classification_names: Vec<_> =
+                        statistics.classifications.keys().collect();
+                    classification_names.sort();
+                    for name in classification_names {
+                        let count = statistics.classifications[name];
+                        let percentage = (count as f64 / statistics.total_tests as f64) * 100.0;
+                        writeln!(f, "    {:>3.0}% {}", percentage, name)?;
+                    }
+                }
+
+                // Show collection statistics
+                if !statistics.collections.is_empty() {
+                    writeln!(f)?;
+                    writeln!(f, "  Test data statistics:")?;
+                    let mut collection_names: Vec<_> = statistics.collections.keys().collect();
+                    collection_names.sort();
+                    for name in collection_names {
+                        let values = &statistics.collections[name];
+                        if !values.is_empty() {
+                            // Filter out NaN and infinite values for robust statistics
+                            let finite_values: Vec<f64> =
+                                values.iter().copied().filter(|v| v.is_finite()).collect();
+
+                            if !finite_values.is_empty() {
+                                let min =
+                                    finite_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                                let max = finite_values
+                                    .iter()
+                                    .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                                let avg =
+                                    finite_values.iter().sum::<f64>() / finite_values.len() as f64;
+
+                                let mut sorted = finite_values.clone();
+                                sorted.sort_by(|a, b| {
+                                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                                });
+                                let median = if sorted.len() % 2 == 0 {
+                                    (sorted[sorted.len() / 2 - 1] + sorted[sorted.len() / 2]) / 2.0
+                                } else {
+                                    sorted[sorted.len() / 2]
+                                };
+
+                                writeln!(
+                                    f,
+                                    "    {}: min={:.1}, max={:.1}, avg={:.1}, median={:.1}",
+                                    name, min, max, avg, median
+                                )?;
+                            }
+                        }
+                    }
+                }
+
+                Ok(())
             }
             TestResult::Fail {
                 counterexample,

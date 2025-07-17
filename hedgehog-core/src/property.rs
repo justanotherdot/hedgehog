@@ -2,12 +2,44 @@
 
 use crate::error::ShrinkStep;
 use crate::{data::*, error::*, gen::*, tree::*};
+use std::collections::HashMap;
+
+/// Statistics gathered during property testing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestStatistics {
+    pub classifications: HashMap<String, usize>,
+    pub collections: HashMap<String, Vec<f64>>,
+    pub total_tests: usize,
+}
+
+impl TestStatistics {
+    pub fn new() -> Self {
+        TestStatistics {
+            classifications: HashMap::new(),
+            collections: HashMap::new(),
+            total_tests: 0,
+        }
+    }
+
+    pub fn record_classification(&mut self, name: &str) {
+        *self.classifications.entry(name.to_string()).or_insert(0) += 1;
+    }
+
+    pub fn record_collection(&mut self, name: &str, value: f64) {
+        self.collections
+            .entry(name.to_string())
+            .or_insert_with(Vec::new)
+            .push(value);
+    }
+}
 
 /// A property that can be tested with generated inputs.
 pub struct Property<T> {
     generator: Gen<T>,
     test_function: Box<dyn Fn(&T) -> TestResult>,
     variable_name: Option<String>,
+    classifications: Vec<(String, Box<dyn Fn(&T) -> bool>)>,
+    collections: Vec<(String, Box<dyn Fn(&T) -> f64>)>,
 }
 
 impl<T> Property<T>
@@ -23,6 +55,8 @@ where
             generator,
             test_function: Box::new(test_function),
             variable_name: None,
+            classifications: Vec::new(),
+            collections: Vec::new(),
         }
     }
 
@@ -80,6 +114,26 @@ where
         property
     }
 
+    /// Add a classification to categorize test inputs.
+    pub fn classify<F>(mut self, name: &str, predicate: F) -> Self
+    where
+        F: Fn(&T) -> bool + 'static,
+    {
+        self.classifications
+            .push((name.to_string(), Box::new(predicate)));
+        self
+    }
+
+    /// Add a collection to gather numerical statistics from test inputs.
+    pub fn collect<F>(mut self, name: &str, extractor: F) -> Self
+    where
+        F: Fn(&T) -> f64 + 'static,
+    {
+        self.collections
+            .push((name.to_string(), Box::new(extractor)));
+        self
+    }
+
     /// Run this property with the given configuration.
     pub fn run(&self, config: &Config) -> TestResult {
         self.run_with_context(config, None, None)
@@ -93,6 +147,7 @@ where
         module_path: Option<&str>,
     ) -> TestResult {
         let mut seed = Seed::random();
+        let mut statistics = TestStatistics::new();
 
         for test_num in 0..config.test_limit {
             let size = Size::new((test_num * config.size_limit) / config.test_limit);
@@ -100,6 +155,9 @@ where
             seed = next_seed;
 
             let tree = self.generator.generate(size, test_seed);
+
+            // Collect statistics from the generated value
+            self.collect_statistics(&tree.value, &mut statistics);
 
             match self.check_tree(&tree, config) {
                 TestResult::Pass { .. } => continue,
@@ -124,10 +182,38 @@ where
             }
         }
 
-        TestResult::Pass {
-            tests_run: config.test_limit,
-            property_name: property_name.map(|s| s.to_string()),
-            module_path: module_path.map(|s| s.to_string()),
+        statistics.total_tests = config.test_limit;
+
+        // Return PassWithStatistics only if we have classifications or collections
+        if !self.classifications.is_empty() || !self.collections.is_empty() {
+            TestResult::PassWithStatistics {
+                tests_run: config.test_limit,
+                property_name: property_name.map(|s| s.to_string()),
+                module_path: module_path.map(|s| s.to_string()),
+                statistics,
+            }
+        } else {
+            TestResult::Pass {
+                tests_run: config.test_limit,
+                property_name: property_name.map(|s| s.to_string()),
+                module_path: module_path.map(|s| s.to_string()),
+            }
+        }
+    }
+
+    /// Collect statistics from a test input.
+    fn collect_statistics(&self, value: &T, statistics: &mut TestStatistics) {
+        // Apply all classifications
+        for (name, predicate) in &self.classifications {
+            if predicate(value) {
+                statistics.record_classification(name);
+            }
+        }
+
+        // Apply all collections
+        for (name, extractor) in &self.collections {
+            let extracted_value = extractor(value);
+            statistics.record_collection(name, extracted_value);
         }
     }
 
@@ -200,6 +286,7 @@ where
                     });
                 }
                 TestResult::Pass { .. } => continue,
+                TestResult::PassWithStatistics { .. } => continue,
                 TestResult::Discard { .. } => continue,
             }
         }
@@ -402,5 +489,105 @@ mod tests {
             }
             other => panic!("Expected success, got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_property_classification() {
+        // Test that property classification works correctly
+        let gen = Gen::int_range(-10, 10);
+        let prop = for_all(gen, |&x| x >= -10 && x <= 10) // Always passes
+            .classify("negative", |&x| x < 0)
+            .classify("zero", |&x| x == 0)
+            .classify("positive", |&x| x > 0)
+            .collect("value", |&x| x as f64);
+
+        let config = Config::default().with_tests(50);
+        let result = prop.run(&config);
+
+        match result {
+            TestResult::PassWithStatistics { statistics, .. } => {
+                // Should have some classifications (but zero might not always appear with only 50 tests)
+                assert!(!statistics.classifications.is_empty());
+
+                // Should at least have negative or positive (much more likely than zero)
+                assert!(
+                    statistics.classifications.contains_key("negative")
+                        || statistics.classifications.contains_key("positive")
+                );
+
+                // Should have collected values
+                assert!(statistics.collections.contains_key("value"));
+                let values = &statistics.collections["value"];
+                assert_eq!(values.len(), 50);
+
+                // Values should be in range
+                for &value in values {
+                    assert!(value >= -10.0 && value <= 10.0);
+                }
+
+                assert_eq!(statistics.total_tests, 50);
+            }
+            other => panic!("Expected PassWithStatistics, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_classification_with_nan_values() {
+        // Test that NaN and infinite values are handled gracefully
+        let gen = Gen::int_range(1, 5);
+        let prop = for_all(gen, |&x| x > 0)
+            .collect("problematic", |&x| match x {
+                1 => f64::NAN,
+                2 => f64::INFINITY,
+                3 => f64::NEG_INFINITY,
+                _ => x as f64,
+            })
+            .collect("normal", |&x| x as f64);
+
+        let config = Config::default().with_tests(20);
+        let result = prop.run(&config);
+
+        match &result {
+            TestResult::PassWithStatistics { statistics, .. } => {
+                // Should have both collections
+                assert!(statistics.collections.contains_key("problematic"));
+                assert!(statistics.collections.contains_key("normal"));
+
+                // The output should format without panicking
+                let output = format!("{}", result);
+                assert!(output.contains("normal"));
+                // Problematic collection might not appear if all values are NaN/infinite
+            }
+            other => panic!("Expected PassWithStatistics, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn snapshot_classification_output() {
+        // Test the output formatting for classifications with deterministic result
+        let statistics = TestStatistics {
+            classifications: {
+                let mut map = std::collections::HashMap::new();
+                map.insert("small".to_string(), 14);
+                map.insert("large".to_string(), 16);
+                map
+            },
+            collections: {
+                let mut map = std::collections::HashMap::new();
+                map.insert("value".to_string(), vec![1.0, 5.0, 10.0, 15.0, 20.0]);
+                map
+            },
+            total_tests: 30,
+        };
+
+        let result = TestResult::PassWithStatistics {
+            tests_run: 30,
+            property_name: Some("test_classification".to_string()),
+            module_path: Some("hedgehog_core::property::tests".to_string()),
+            statistics,
+        };
+
+        let output = format!("{}", result);
+        archetype::snap("classification_output", output);
     }
 }

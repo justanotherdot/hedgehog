@@ -151,22 +151,42 @@ where
     ///
     /// This is similar to QuickCheck's `frequency` and Haskell Hedgehog's weighted choice.
     /// Higher weights make choices more likely to be selected.
+    ///
+    /// # Panics
+    /// This function will panic if the choices list is empty or all weights are zero.
+    /// For a non-panicking version, use `try_frequency`.
     pub fn frequency(choices: Vec<WeightedChoice<T>>) -> Gen<T>
     where
         T: Clone,
     {
+        Self::try_frequency(choices).unwrap_or_else(|err| {
+            panic!("frequency: {}", err);
+        })
+    }
+
+    /// Generate values using weighted frequency distribution.
+    ///
+    /// Returns an error if the choices list is empty or all weights are zero.
+    pub fn try_frequency(choices: Vec<WeightedChoice<T>>) -> crate::Result<Gen<T>>
+    where
+        T: Clone,
+    {
         if choices.is_empty() {
-            panic!("frequency: empty choices list");
+            return Err(crate::HedgehogError::InvalidGenerator {
+                message: "frequency choices list cannot be empty".to_string(),
+            });
         }
 
         // Calculate total weight
         let total_weight: u64 = choices.iter().map(|c| c.weight).sum();
 
         if total_weight == 0 {
-            panic!("frequency: total weight is zero");
+            return Err(crate::HedgehogError::InvalidGenerator {
+                message: "frequency total weight cannot be zero".to_string(),
+            });
         }
 
-        Gen::new(move |size, seed| {
+        Ok(Gen::new(move |size, seed| {
             let (choice_value, new_seed) = seed.next_bounded(total_weight);
 
             // Find the chosen generator based on cumulative weights
@@ -182,7 +202,7 @@ where
             }
 
             chosen_generator.generate(size, new_seed)
-        })
+        }))
     }
 
     /// Generate values using one of the given generators with equal probability.
