@@ -11,6 +11,7 @@ Property-based testing library for Rust, inspired by the original [Hedgehog](htt
 - **Excellent debugging** - Minimal counterexamples with rich failure reporting
 - **Distribution shaping** - Control probability distributions for realistic test data
 - **Variable name tracking** - Enhanced failure reporting with named inputs
+- **Property classification** - Inspect test data distribution and statistics
 - **Derive macros** - Automatic generator creation for custom types
 
 ## Quick Start
@@ -181,6 +182,38 @@ let prop = for_all_named(gen, "input", |input| test_condition(input));
 // Output: │ forAll 0 = 42 -- input
 ```
 
+### Property Classification
+
+Inspect the distribution of your test data to ensure generators produce realistic inputs:
+
+```rust
+let prop = for_all(Gen::int_range(-10, 10), |&x| x >= -10 && x <= 10)
+    .classify("negative", |&x| x < 0)
+    .classify("zero", |&x| x == 0)  
+    .classify("positive", |&x| x > 0)
+    .collect("absolute_value", |&x| x.abs() as f64);
+
+match prop.run(&Config::default()) {
+    TestResult::PassWithStatistics { statistics, .. } => {
+        // Shows distribution and statistics
+    }
+    _ => {}
+}
+```
+
+Output:
+```
+✓ property passed 100 tests.
+
+Test data distribution:
+  45% negative
+   3% zero
+  52% positive
+
+Test data statistics:
+  absolute_value: min=0.0, max=10.0, avg=4.2, median=3.0
+```
+
 ### Integrated Shrinking
 
 When a test fails, Hedgehog automatically finds the minimal counterexample:
@@ -218,6 +251,9 @@ cargo run --example distribution-shaping
 # Variable name tracking examples  
 cargo run --example variable-name-tracking
 
+# Property classification examples
+cargo run --example classification
+
 # Basic usage examples
 cargo run --example basic
 
@@ -241,10 +277,18 @@ This is a work-in-progress implementation. See [docs/roadmap.md](docs/roadmap.md
 
 ### Recently Completed
 
-- ✅ **Distribution Shaping and Range System** - Control probability distributions with uniform, linear, exponential, and constant distributions
-- ✅ **Variable Name Tracking** - Enhanced failure reporting showing named inputs in shrinking progression
-- ✅ **Frequency-Based Generation** - Weighted choice and one-of generators for realistic data patterns
-- ✅ **Enhanced String Generation** - Controlled length ranges and distribution-based character generation
+- **Distribution Shaping and Range System** - Control probability distributions with uniform, linear, exponential, and constant distributions
+- **Variable Name Tracking** - Enhanced failure reporting showing named inputs in shrinking progression
+- **Frequency-Based Generation** - Weighted choice and one-of generators for realistic data patterns
+- **Property Classification** - Inspect test data distribution and gather statistics to validate generators
+- **Enhanced String Generation** - Controlled length ranges and distribution-based character generation
+
+## Documentation
+
+- [Property Classification Guide](docs/property-classification.md) - Inspecting test data distribution and statistics
+- [Implementation Plan](docs/implementation-plan.md) - Detailed implementation roadmap
+- [Roadmap](docs/roadmap.md) - Project status and future plans
+- [Ideas](docs/ideas.md) - Comprehensive feature survey from other property testing libraries
 
 ## Contributing
 

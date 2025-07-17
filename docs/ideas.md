@@ -160,19 +160,103 @@ let prop = temporal_property! {
 };
 ```
 
+## Targeted Properties
+
+### 12. Performance-Targeted Properties
+**Inspiration**: Original QuickCheck targeted properties
+**What**: Target specific performance characteristics and bounds
+```rust
+let latency_prop = for_all(Gen::http_request(), |req| {
+    let start = Instant::now();
+    let result = service.handle(req);
+    let duration = start.elapsed();
+    
+    // Target: sub-100ms response times
+    duration < Duration::from_millis(100)
+}).collect_percentile("response_time", 0.95, Duration::from_millis(100));
+
+// Throughput targeting
+let throughput_prop = for_all(Gen::concurrent_requests(), |requests| {
+    let throughput = measure_throughput(requests);
+    throughput >= target_throughput_rps()
+});
+```
+
+### 13. Resource-Targeted Properties
+**What**: Target specific resource utilization bounds
+```rust
+let memory_prop = for_all(Gen::workload(), |workload| {
+    let peak_memory = measure_peak_memory(|| {
+        process_workload(workload)
+    });
+    
+    // Target: stay under 100MB peak memory
+    peak_memory < ByteSize::mb(100)
+});
+
+let cpu_prop = for_all(Gen::computation(), |computation| {
+    let cpu_usage = measure_cpu_usage(|| {
+        execute_computation(computation)
+    });
+    
+    // Target: stay under 80% CPU utilization
+    cpu_usage.avg_percent < 80.0
+});
+```
+
+### 14. Scalability-Targeted Properties
+**What**: Target specific scalability characteristics
+```rust
+let complexity_prop = for_all(Gen::input_size(), |size| {
+    let duration = measure_operation_time(size);
+    let expected = calculate_o_n_log_n_bound(size);
+    
+    // Target: O(n log n) complexity bounds
+    duration <= expected * safety_factor()
+});
+```
+
+### 15. Regression-Targeted Properties
+**What**: Target performance regression bounds
+```rust
+let regression_prop = for_all(Gen::benchmark_case(), |case| {
+    let baseline = load_baseline_result(&case);
+    let current = measure_current_performance(&case);
+    
+    // Target: no more than 10% performance regression
+    current.duration <= baseline.duration * 1.10 &&
+    current.memory <= baseline.memory * 1.05
+});
+```
+
+### 16. Deadline-Targeted Properties
+**What**: Target deadline and timeout behavior
+```rust
+let deadline_prop = for_all(Gen::operation_with_deadline(), |(op, deadline)| {
+    let result = execute_with_deadline(op, deadline);
+    
+    // Target: either complete on time or timeout gracefully
+    match result {
+        Ok(_) => Instant::now() <= deadline,
+        Err(TimeoutError) => true, // Graceful timeout
+        Err(_) => false,
+    }
+});
+```
+
 ## Lower Priority Features
 
-### 12. Binary Instrumentation
+### 17. Binary Instrumentation
 **Inspiration**: AFL
 **What**: Fuzz binaries without source code access
 **Use case**: Testing closed-source libraries or C bindings
 
-### 13. Distributed Fuzzing
+### 18. Distributed Fuzzing
 **Inspiration**: AFL++
 **What**: Coordinate fuzzing across multiple machines
 **Use case**: Large-scale continuous fuzzing in CI/CD
 
-### 14. Structure-Aware Mutations
+### 19. Structure-Aware Mutations
 **Inspiration**: FuzzCheck
 **What**: Intelligent mutations that understand data structure
 ```rust
@@ -180,7 +264,7 @@ let prop = temporal_property! {
 // and make valid JSON mutations like adding/removing keys
 ```
 
-### 15. Interactive Debugging
+### 20. Interactive Debugging
 **What**: Step through shrinking process, examine intermediate values
 ```rust
 // Debug mode that shows each shrinking step

@@ -1,0 +1,9 @@
+━━━ hedgehog_core::property::tests ━━━
+  ✓ test_classification passed 30 tests.
+
+  Test data distribution:
+     53% large
+     47% small
+
+  Test data statistics:
+    value: min=1.0, max=20.0, avg=10.2, median=10.0

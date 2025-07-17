@@ -51,3 +51,7 @@ path = "../examples/shrinking.rs"
 [[example]]
 name = "tree-output"
 path = "../examples/tree-output.rs"
+
+[[example]]
+name = "classification"
+path = "../examples/classification.rs"
