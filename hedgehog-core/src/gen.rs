@@ -2,6 +2,69 @@
 
 use crate::{data::*, tree::*};
 
+fn towards<T>(destination: T, x: T) -> Vec<T>
+where
+    T: Copy + PartialEq + PartialOrd + std::ops::Sub<Output = T> + std::ops::Add<Output = T> + std::ops::Div<Output = T> + From<u8>,
+{
+    if destination == x {
+        return Vec::new();
+    }
+
+    let mut result = vec![destination];
+    let diff = if x > destination { x - destination } else { destination - x };
+    
+    let mut current = diff;
+    let zero = T::from(0);
+    let two = T::from(2);
+    
+    while current != zero {
+        let shrink = if x > destination { x - current } else { x + current };
+        if shrink != x && shrink != destination {
+            result.push(shrink);
+        }
+        current = current / two;
+    }
+    
+    result
+}
+
+fn removes<T: Clone>(k: usize, xs: &[T]) -> Vec<Vec<T>> {
+    if k > xs.len() {
+        return Vec::new();
+    }
+    if k == 0 {
+        return vec![xs.to_vec()];
+    }
+    if xs.len() == k {
+        return vec![Vec::new()];
+    }
+    
+    let mut result = Vec::new();
+    let tail = &xs[k..];
+    result.push(tail.to_vec());
+    
+    for smaller in removes(k, &xs[1..]) {
+        let mut combined = vec![xs[0].clone()];
+        combined.extend(smaller);
+        result.push(combined);
+    }
+    
+    result
+}
+
+fn list_shrinks<T: Clone>(xs: &[T]) -> Vec<Vec<T>> {
+    let mut result = Vec::new();
+    let len = xs.len();
+    
+    let mut current = len;
+    while current != 0 {
+        result.extend(removes(current, xs));
+        current /= 2;
+    }
+    
+    result
+}
+
 /// A weighted choice for frequency-based generation.
 pub struct WeightedChoice<T> {
     /// The weight of this choice (higher weights are more likely).
@@ -229,52 +292,19 @@ macro_rules! impl_numeric_gen {
                     let (value, _new_seed) = seed.next_bounded(range);
                     let result = min + value as $type;
 
-                    // Enhanced shrinking: towards zero, binary search, and origin-based
-                    let mut shrinks = Vec::new();
-
-                    // First, try shrinking towards the origin (closest valid value to 0)
                     let origin = if min <= 0 && max >= 0 {
-                        0 // Zero is in range
+                        0
                     } else if min > 0 {
-                        min // Positive range, shrink towards minimum
+                        min
                     } else {
-                        max // Negative range, shrink towards maximum (closest to 0)
+                        max
                     };
 
-                    if origin != result {
-                        shrinks.push(Tree::singleton(origin));
-                    }
-
-                    // Binary search shrinking between result and origin
-                    let mut low = if result < origin { result } else { origin };
-                    let mut high = if result > origin { result } else { origin };
-
-                    while high - low > 1 {
-                        let mid = low + (high - low) / 2;
-                        if mid != result && mid >= min && mid <= max {
-                            shrinks.push(Tree::singleton(mid));
-                        }
-                        if result < origin {
-                            low = mid;
-                        } else {
-                            high = mid;
-                        }
-                    }
-
-                    // Traditional halving shrinks as fallback
-                    let mut current = result;
-                    for _ in 0..10 {
-                        // Limit iterations to prevent infinite loops
-                        current = if current > origin {
-                            current - (current - origin + 1) / 2
-                        } else if current < origin {
-                            current + (origin - current + 1) / 2
-                        } else {
-                            break;
-                        };
-
-                        if current != result && current >= min && current <= max {
-                            shrinks.push(Tree::singleton(current));
+                    let shrink_values = towards(origin, result);
+                    let mut shrinks = Vec::new();
+                    for &shrink_value in &shrink_values {
+                        if shrink_value >= min && shrink_value <= max {
+                            shrinks.push(Tree::singleton(shrink_value));
                         }
                     }
 
@@ -310,39 +340,13 @@ macro_rules! impl_unsigned_gen {
                     let (value, _new_seed) = seed.next_bounded(range);
                     let result = min + value as $type;
 
-                    // Enhanced shrinking for unsigned: towards zero (minimum)
-                    let mut shrinks = Vec::new();
-
-                    // For unsigned types, origin is always min (closest to 0)
                     let origin = min;
-
-                    if origin != result {
-                        shrinks.push(Tree::singleton(origin));
-                    }
-
-                    // Binary search shrinking between result and origin
-                    let low = origin;
-                    let mut high = result;
-
-                    while high - low > 1 {
-                        let mid = low + (high - low) / 2;
-                        if mid != result && mid >= min && mid <= max {
-                            shrinks.push(Tree::singleton(mid));
-                        }
-                        high = mid;
-                    }
-
-                    // Traditional halving shrinks towards minimum
-                    let mut current = result;
-                    for _ in 0..10 {
-                        // Limit iterations to prevent infinite loops
-                        if current <= min {
-                            break;
-                        }
-                        current = min + (current - min) / 2;
-
-                        if current != result && current >= min && current <= max {
-                            shrinks.push(Tree::singleton(current));
+                    
+                    let shrink_values = towards(origin, result);
+                    let mut shrinks = Vec::new();
+                    for &shrink_value in &shrink_values {
+                        if shrink_value >= min && shrink_value <= max {
+                            shrinks.push(Tree::singleton(shrink_value));
                         }
                     }
 
@@ -580,36 +584,10 @@ impl Gen<String> {
                 shrinks.push(Tree::singleton(String::new()));
             }
 
-            // Character removal shrinking
-            if !chars.is_empty() {
-                // Remove last character
-                let shorter: String = chars[..chars.len() - 1].iter().collect();
-                shrinks.push(Tree::singleton(shorter));
-
-                // Remove first character
-                if chars.len() > 1 {
-                    let shorter: String = chars[1..].iter().collect();
-                    shrinks.push(Tree::singleton(shorter));
-                }
-
-                // Remove middle character for longer strings
-                if chars.len() > 2 {
-                    let mid = chars.len() / 2;
-                    let mut middle_removed = chars.clone();
-                    middle_removed.remove(mid);
-                    let shorter: String = middle_removed.iter().collect();
-                    shrinks.push(Tree::singleton(shorter));
-                }
-
-                // Try removing multiple characters at once for very long strings
-                if chars.len() > 4 {
-                    let quarter = chars.len() / 4;
-                    let shorter: String = chars[..quarter]
-                        .iter()
-                        .chain(chars[3 * quarter..].iter())
-                        .collect();
-                    shrinks.push(Tree::singleton(shorter));
-                }
+            // Use sophisticated character removal shrinking
+            for shrunk_chars in list_shrinks(&chars) {
+                let shrunk_string: String = shrunk_chars.iter().collect();
+                shrinks.push(Tree::singleton(shrunk_string));
             }
 
             // Character simplification shrinking
@@ -786,47 +764,11 @@ where
                 element_trees.push(element_tree);
             }
 
-            // Enhanced collection shrinking: element removal + element-wise shrinking
             let mut shrinks = Vec::new();
 
-            // Always try empty vector first (ultimate shrink)
-            if !elements.is_empty() {
-                shrinks.push(Tree::singleton(Vec::new()));
-            }
-
-            // Element removal shrinking
-            if !elements.is_empty() {
-                // Remove last element
-                let mut shorter = elements.clone();
-                shorter.pop();
-                shrinks.push(Tree::singleton(shorter));
-
-                // Remove first element
-                if elements.len() > 1 {
-                    let shorter = elements[1..].to_vec();
-                    shrinks.push(Tree::singleton(shorter));
-                }
-
-                // Remove middle element for longer vectors
-                if elements.len() > 2 {
-                    let mid = elements.len() / 2;
-                    let shorter = [&elements[..mid], &elements[mid + 1..]].concat();
-                    shrinks.push(Tree::singleton(shorter));
-                }
-
-                // Remove multiple elements for very long vectors
-                if elements.len() > 6 {
-                    let quarter = elements.len() / 4;
-                    let shorter = [&elements[..quarter], &elements[3 * quarter..]].concat();
-                    shrinks.push(Tree::singleton(shorter));
-                }
-
-                // Try first half and second half
-                if elements.len() > 3 {
-                    let half = elements.len() / 2;
-                    shrinks.push(Tree::singleton(elements[..half].to_vec()));
-                    shrinks.push(Tree::singleton(elements[half..].to_vec()));
-                }
+            // Use sophisticated list shrinking algorithm
+            for shrunk_list in list_shrinks(&elements) {
+                shrinks.push(Tree::singleton(shrunk_list));
             }
 
             // Element-wise shrinking: shrink individual elements while keeping the structure
@@ -835,20 +777,6 @@ where
                     let mut shrunk_vec = elements.clone();
                     shrunk_vec[i] = shrunk_element.clone();
                     shrinks.push(Tree::singleton(shrunk_vec));
-                }
-            }
-
-            // Smart removal: try removing elements that might be less important
-            if elements.len() > 1 {
-                // Remove every other element
-                let filtered: Vec<_> = elements
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| i % 2 == 0)
-                    .map(|(_, elem)| elem.clone())
-                    .collect();
-                if filtered.len() < elements.len() {
-                    shrinks.push(Tree::singleton(filtered));
                 }
             }
 
@@ -1500,5 +1428,74 @@ mod tests {
         // Test constant distribution
         let (const_val, _) = Distribution::Constant.sample_u64(seed, 100);
         assert_eq!(const_val, 0);
+    }
+
+    #[test]
+    fn test_towards_algorithm() {
+        // Test basic functionality
+        let result = towards(0, 8);
+        println!("towards(0, 8) = {:?}", result);
+        assert_eq!(result[0], 0); // First element is always destination
+        assert!(result.len() > 1); // Should have multiple shrinks
+        
+        let result2 = towards(0, 4);
+        println!("towards(0, 4) = {:?}", result2);
+        
+        // Test same values
+        assert_eq!(towards(5i32, 5i32), Vec::<i32>::new());
+        
+        // Test edge cases
+        assert_eq!(towards(0i32, 1i32), vec![0]);
+        assert_eq!(towards(1i32, 0i32), vec![1]);
+        
+        // Test that destination is always first (key property)
+        let result3 = towards(10, 20);
+        println!("towards(10, 20) = {:?}", result3);
+        assert_eq!(result3[0], 10);
+    }
+
+    #[test]
+    fn test_removes_function() {
+        // Test basic removal
+        let input = vec![1, 2, 3, 4];
+        
+        // Remove 1 element
+        let result = removes(1, &input);
+        println!("removes(1, [1,2,3,4]) = {:?}", result);
+        
+        // Remove 2 elements  
+        let result2 = removes(2, &input);
+        println!("removes(2, [1,2,3,4]) = {:?}", result2);
+        
+        // Remove all elements
+        let result_all = removes(4, &input);
+        assert_eq!(result_all, vec![Vec::<i32>::new()]);
+        
+        // Remove 0 elements
+        let result_none = removes(0, &input);
+        assert_eq!(result_none, vec![input.clone()]);
+        
+        // Remove more than available
+        let result_over = removes(10, &input);
+        assert!(result_over.is_empty());
+    }
+
+    #[test]
+    fn test_list_shrinks_comprehensive() {
+        let input = vec![1, 2, 3, 4];
+        let shrinks = list_shrinks(&input);
+        println!("list_shrinks([1,2,3,4]) = {:?}", shrinks);
+        
+        // Should include empty list (from removing all 4 elements)
+        assert!(shrinks.contains(&vec![]));
+        
+        // Should have various removal patterns - just verify we get multiple results
+        assert!(!shrinks.is_empty());
+        
+        // Verify we get different lengths (the key property)
+        let lengths: Vec<usize> = shrinks.iter().map(|v| v.len()).collect();
+        println!("shrink lengths: {:?}", lengths);
+        assert!(lengths.contains(&0)); // Empty list
+        assert!(lengths.len() > 2); // Multiple different shrinks
     }
 }
