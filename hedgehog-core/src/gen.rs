@@ -164,6 +164,16 @@ impl<T> Gen<T> {
     {
         Gen::new(move |_size, _seed| Tree::singleton(value.clone()))
     }
+    
+    /// Generate a sample value with default parameters.
+    /// This is a convenience method for state machine testing.
+    pub fn sample(&self) -> T
+    where
+        T: Clone,
+    {
+        let tree = self.generate(Size(30), Seed(42, 1337));
+        tree.value
+    }
 }
 
 impl<T> Gen<T>
