@@ -968,6 +968,287 @@ where
     }
 }
 
+/// Function generators for testing functions as first-class values.
+/// These generators create functions that can be called during property tests,
+/// enabling testing of higher-order functions and functional composition.
+impl<A, B> Gen<Box<dyn Fn(A) -> B>>
+where
+    A: 'static + Clone + std::fmt::Debug + PartialEq + std::hash::Hash + Eq,
+    B: 'static + Clone + std::fmt::Debug,
+{
+    /// Generate functions from a lookup table mapping inputs to outputs.
+    /// 
+    /// This creates a finite function by generating a table of input-output pairs
+    /// and using a default value for unmapped inputs. The function will have
+    /// deterministic behavior that can be shrunk by reducing the lookup table.
+    pub fn function_of(
+        input_gen: Gen<A>,
+        output_gen: Gen<B>,
+        default_output: B,
+    ) -> Self 
+    where
+        B: Clone,
+    {
+        Gen::new(move |size, seed| {
+            use std::collections::HashMap;
+            
+            let (table_size_seed, rest_seed) = seed.split();
+            let (table_size, _) = table_size_seed.next_bounded((size.get() + 1) as u64);
+            let table_size = (table_size as usize).max(1).min(20); // Reasonable bounds
+            
+            let mut current_seed = rest_seed;
+            let mut lookup_table = HashMap::new();
+            let mut input_trees = Vec::new();
+            let mut output_trees = Vec::new();
+            
+            // Generate lookup table entries
+            for _ in 0..table_size {
+                let (input_seed, rest) = current_seed.split();
+                let (output_seed, next_seed) = rest.split();
+                current_seed = next_seed;
+                
+                let input_tree = input_gen.generate(size, input_seed);
+                let output_tree = output_gen.generate(size, output_seed);
+                
+                lookup_table.insert(input_tree.value.clone(), output_tree.value.clone());
+                input_trees.push(input_tree);
+                output_trees.push(output_tree);
+            }
+            
+            let default = default_output.clone();
+            let lookup_table_clone = lookup_table.clone();
+            let function: Box<dyn Fn(A) -> B> = Box::new(move |input: A| {
+                lookup_table_clone.get(&input).cloned().unwrap_or_else(|| default.clone())
+            });
+            
+            // Shrinking strategy: reduce lookup table size and shrink individual entries
+            let mut shrinks = Vec::new();
+            
+            // Shrink to smaller lookup tables
+            if lookup_table.len() > 1 {
+                // Try empty lookup table (constant function returning default)
+                let empty_default = default_output.clone();
+                let constant_fn: Box<dyn Fn(A) -> B> = Box::new(move |_: A| empty_default.clone());
+                shrinks.push(Tree::singleton(constant_fn));
+                
+                // Try lookup table with half the entries
+                let half_size = lookup_table.len() / 2;
+                if half_size > 0 {
+                    let mut smaller_table = HashMap::new();
+                    for (key, value) in lookup_table.iter().take(half_size) {
+                        smaller_table.insert(key.clone(), value.clone());
+                    }
+                    let smaller_default = default_output.clone();
+                    let smaller_fn: Box<dyn Fn(A) -> B> = Box::new(move |input: A| {
+                        smaller_table.get(&input).cloned().unwrap_or_else(|| smaller_default.clone())
+                    });
+                    shrinks.push(Tree::singleton(smaller_fn));
+                }
+            }
+            
+            // Shrink individual lookup entries
+            for (i, output_tree) in output_trees.iter().enumerate() {
+                for shrunk_output in output_tree.shrinks() {
+                    let mut shrunk_table = lookup_table.clone();
+                    let input_key = &input_trees[i].value;
+                    shrunk_table.insert(input_key.clone(), shrunk_output.clone());
+                    
+                    let shrunk_default = default_output.clone();
+                    let shrunk_fn: Box<dyn Fn(A) -> B> = Box::new(move |input: A| {
+                        shrunk_table.get(&input).cloned().unwrap_or_else(|| shrunk_default.clone())
+                    });
+                    shrinks.push(Tree::singleton(shrunk_fn));
+                }
+            }
+            
+            Tree::with_children(function, shrinks)
+        })
+    }
+    
+    /// Generate constant functions that always return the same value.
+    pub fn constant_function(output_gen: Gen<B>) -> Self {
+        Gen::new(move |size, seed| {
+            let output_tree = output_gen.generate(size, seed);
+            let output_value = output_tree.value.clone();
+            
+            let function: Box<dyn Fn(A) -> B> = Box::new(move |_: A| output_value.clone());
+            
+            // Shrink by shrinking the constant output value
+            let mut shrinks = Vec::new();
+            for shrunk_output in output_tree.shrinks() {
+                let shrunk_value = shrunk_output.clone();
+                let shrunk_fn: Box<dyn Fn(A) -> B> = Box::new(move |_: A| shrunk_value.clone());
+                shrinks.push(Tree::singleton(shrunk_fn));
+            }
+            
+            Tree::with_children(function, shrinks)
+        })
+    }
+    
+    /// Generate identity-like functions for compatible input/output types.
+    pub fn identity_function() -> Self 
+    where
+        A: Into<B>,
+    {
+        Gen::new(move |_size, _seed| {
+            let function: Box<dyn Fn(A) -> B> = Box::new(|input: A| input.into());
+            Tree::singleton(function)
+        })
+    }
+}
+
+/// Function generators for binary functions.
+impl<A, B, C> Gen<Box<dyn Fn(A, B) -> C>>
+where
+    A: 'static + Clone + std::fmt::Debug + PartialEq + std::hash::Hash + Eq,
+    B: 'static + Clone + std::fmt::Debug + PartialEq + std::hash::Hash + Eq,
+    C: 'static + Clone + std::fmt::Debug,
+{
+    /// Generate binary functions using a lookup table for input pairs.
+    pub fn binary_function_of(
+        input_a_gen: Gen<A>,
+        input_b_gen: Gen<B>,
+        output_gen: Gen<C>,
+        default_output: C,
+    ) -> Self {
+        Gen::new(move |size, seed| {
+            use std::collections::HashMap;
+            
+            let (table_size_seed, rest_seed) = seed.split();
+            let (table_size, _) = table_size_seed.next_bounded((size.get() + 1) as u64);
+            let table_size = (table_size as usize).max(1).min(15); // Smaller for binary functions
+            
+            let mut current_seed = rest_seed;
+            let mut lookup_table = HashMap::new();
+            let mut output_trees = Vec::new();
+            
+            // Generate lookup table entries
+            for _ in 0..table_size {
+                let (input_a_seed, rest) = current_seed.split();
+                let (input_b_seed, rest2) = rest.split();
+                let (output_seed, next_seed) = rest2.split();
+                current_seed = next_seed;
+                
+                let input_a_tree = input_a_gen.generate(size, input_a_seed);
+                let input_b_tree = input_b_gen.generate(size, input_b_seed);
+                let output_tree = output_gen.generate(size, output_seed);
+                
+                let key = (input_a_tree.value.clone(), input_b_tree.value.clone());
+                lookup_table.insert(key, output_tree.value.clone());
+                output_trees.push(output_tree);
+            }
+            
+            let default = default_output.clone();
+            let function: Box<dyn Fn(A, B) -> C> = Box::new(move |a: A, b: B| {
+                lookup_table.get(&(a, b)).cloned().unwrap_or_else(|| default.clone())
+            });
+            
+            // Shrinking: similar to unary functions
+            let mut shrinks = Vec::new();
+            
+            // Constant function shrink
+            let constant_default = default_output.clone();
+            let constant_fn: Box<dyn Fn(A, B) -> C> = Box::new(move |_: A, _: B| constant_default.clone());
+            shrinks.push(Tree::singleton(constant_fn));
+            
+            Tree::with_children(function, shrinks)
+        })
+    }
+}
+
+/// Predicate function generators for testing filter operations.
+impl<A> Gen<Box<dyn Fn(A) -> bool>>
+where
+    A: 'static + Clone + std::fmt::Debug + PartialEq + std::hash::Hash + Eq,
+{
+    /// Generate predicate functions based on a set of "accepted" values.
+    pub fn predicate_from_set(accepted_gen: Gen<Vec<A>>) -> Self {
+        Gen::new(move |size, seed| {
+            let accepted_tree = accepted_gen.generate(size, seed);
+            let accepted_set: std::collections::HashSet<A> = 
+                accepted_tree.value.iter().cloned().collect();
+            
+            let accepted_set_clone = accepted_set.clone();
+            let predicate: Box<dyn Fn(A) -> bool> = Box::new(move |input: A| {
+                accepted_set_clone.contains(&input)
+            });
+            
+            // Shrinking: shrink the accepted set
+            let mut shrinks = Vec::new();
+            
+            // Always-false predicate (empty set)
+            let false_pred: Box<dyn Fn(A) -> bool> = Box::new(|_: A| false);
+            shrinks.push(Tree::singleton(false_pred));
+            
+            // Always-true predicate (if we have any accepted values)
+            if !accepted_set.is_empty() {
+                let true_pred: Box<dyn Fn(A) -> bool> = Box::new(|_: A| true);
+                shrinks.push(Tree::singleton(true_pred));
+            }
+            
+            // Shrink by reducing the accepted set
+            for shrunk_accepted in accepted_tree.shrinks() {
+                let shrunk_set: std::collections::HashSet<A> = 
+                    shrunk_accepted.iter().cloned().collect();
+                let shrunk_pred: Box<dyn Fn(A) -> bool> = Box::new(move |input: A| {
+                    shrunk_set.contains(&input)
+                });
+                shrinks.push(Tree::singleton(shrunk_pred));
+            }
+            
+            Tree::with_children(predicate, shrinks)
+        })
+    }
+    
+    /// Generate predicate functions that always return the same boolean value.
+    pub fn constant_predicate(value_gen: Gen<bool>) -> Self {
+        Gen::new(move |size, seed| {
+            let bool_tree = value_gen.generate(size, seed);
+            let bool_value = bool_tree.value;
+            
+            let predicate: Box<dyn Fn(A) -> bool> = Box::new(move |_: A| bool_value);
+            
+            // Shrinking: prefer false over true
+            let mut shrinks = Vec::new();
+            if bool_value {
+                let false_pred: Box<dyn Fn(A) -> bool> = Box::new(|_: A| false);
+                shrinks.push(Tree::singleton(false_pred));
+            }
+            
+            Tree::with_children(predicate, shrinks)
+        })
+    }
+}
+
+/// Comparator function generators for testing sorting operations.
+impl<A> Gen<Box<dyn Fn(A, A) -> std::cmp::Ordering>>
+where
+    A: 'static + Clone + std::fmt::Debug + PartialEq + std::hash::Hash + Eq,
+{
+    /// Generate a constant comparator that always returns the same ordering.
+    pub fn constant_comparator(ordering: std::cmp::Ordering) -> Self {
+        Gen::new(move |_size, _seed| {
+            let comparator: Box<dyn Fn(A, A) -> std::cmp::Ordering> = 
+                Box::new(move |_: A, _: A| ordering);
+            Tree::singleton(comparator)
+        })
+    }
+    
+    /// Generate comparators based on ordering choices.
+    pub fn comparator_from_choices(choices: Vec<std::cmp::Ordering>) -> Self {
+        Gen::new(move |_size, seed| {
+            // Pick a random ordering from the choices
+            let (choice_index, _) = seed.next_bounded(choices.len() as u64);
+            let chosen_ordering = choices.get(choice_index as usize).copied().unwrap_or(std::cmp::Ordering::Equal);
+            
+            let constant_cmp: Box<dyn Fn(A, A) -> std::cmp::Ordering> = 
+                Box::new(move |_: A, _: A| chosen_ordering);
+            
+            Tree::singleton(constant_cmp)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1438,6 +1719,168 @@ mod tests {
         // Test constant distribution
         let (const_val, _) = Distribution::Constant.sample_u64(seed, 100);
         assert_eq!(const_val, 0);
+    }
+
+    #[test]
+    fn test_function_generator() {
+        // Test function_of generator
+        let input_gen = Gen::int_range(0, 5);
+        let output_gen = Gen::int_range(10, 20);
+        let function_gen = Gen::<Box<dyn Fn(i32) -> i32>>::function_of(input_gen, output_gen, -1);
+        
+        let seed = Seed::from_u64(42);
+        let tree = function_gen.generate(Size::new(10), seed);
+        
+        // Test that the function works
+        let result1 = (tree.value)(0);
+        let result2 = (tree.value)(0); // Should be deterministic
+        assert_eq!(result1, result2);
+        
+        // Test that unmapped inputs return default
+        let default_result = (tree.value)(999);
+        assert_eq!(default_result, -1);
+        
+        // Test shrinking exists
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "Function should have shrinks");
+    }
+    
+    #[test]
+    fn test_constant_function_generator() {
+        let output_gen = Gen::int_range(10, 20);
+        let function_gen = Gen::<Box<dyn Fn(i32) -> i32>>::constant_function(output_gen);
+        
+        let seed = Seed::from_u64(123);
+        let tree = function_gen.generate(Size::new(10), seed);
+        
+        // Test that function is constant
+        let result1 = (tree.value)(0);
+        let result2 = (tree.value)(42);
+        let result3 = (tree.value)(-100);
+        
+        assert_eq!(result1, result2);
+        assert_eq!(result2, result3);
+        assert!(result1 >= 10 && result1 <= 20);
+        
+        // Test shrinking
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "Constant function should have shrinks");
+    }
+    
+    #[test]
+    fn test_identity_function_generator() {
+        let function_gen = Gen::<Box<dyn Fn(i32) -> i32>>::identity_function();
+        
+        let seed = Seed::from_u64(456);
+        let tree = function_gen.generate(Size::new(10), seed);
+        
+        // Test identity property
+        assert_eq!((tree.value)(0), 0);
+        assert_eq!((tree.value)(42), 42);
+        assert_eq!((tree.value)(-100), -100);
+        
+        // Identity function has no shrinks (it's already minimal)
+        let shrinks = tree.shrinks();
+        assert!(shrinks.is_empty(), "Identity function should have no shrinks");
+    }
+    
+    #[test]
+    fn test_binary_function_generator() {
+        let input_a_gen = Gen::int_range(0, 2);
+        let input_b_gen = Gen::int_range(0, 2);
+        let output_gen = Gen::int_range(10, 15);
+        let function_gen = Gen::<Box<dyn Fn(i32, i32) -> i32>>::binary_function_of(
+            input_a_gen, input_b_gen, output_gen, 0
+        );
+        
+        let seed = Seed::from_u64(789);
+        let tree = function_gen.generate(Size::new(10), seed);
+        
+        // Test that function works
+        let result1 = (tree.value)(0, 0);
+        let result2 = (tree.value)(0, 0); // Should be deterministic
+        assert_eq!(result1, result2);
+        
+        // Test default for unmapped inputs
+        let default_result = (tree.value)(999, 999);
+        assert_eq!(default_result, 0);
+        
+        // Test shrinking
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "Binary function should have shrinks");
+    }
+    
+    #[test] 
+    fn test_predicate_from_set_generator() {
+        let accepted_gen = Gen::<Vec<i32>>::vec_of(Gen::int_range(0, 5));
+        let predicate_gen = Gen::<Box<dyn Fn(i32) -> bool>>::predicate_from_set(accepted_gen);
+        
+        let seed = Seed::from_u64(333);
+        let tree = predicate_gen.generate(Size::new(10), seed);
+        
+        // Test predicate behavior - should be deterministic
+        let result1 = (tree.value)(0);
+        let result2 = (tree.value)(0);
+        assert_eq!(result1, result2);
+        
+        // Test shrinking includes false predicate
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty(), "Predicate should have shrinks");
+        
+        // At least one shrink should be always-false
+        let has_false_shrink = shrinks.iter().any(|pred| {
+            !(pred)(0) && !(pred)(1) && !(pred)(2) && !(pred)(999)
+        });
+        assert!(has_false_shrink, "Should have always-false predicate shrink");
+    }
+    
+    #[test]
+    fn test_constant_predicate_generator() {
+        let bool_gen = Gen::bool();
+        let predicate_gen = Gen::<Box<dyn Fn(i32) -> bool>>::constant_predicate(bool_gen);
+        
+        let seed = Seed::from_u64(666);
+        let tree = predicate_gen.generate(Size::new(10), seed);
+        
+        // Test that predicate is constant
+        let result1 = (tree.value)(0);
+        let result2 = (tree.value)(42);
+        let result3 = (tree.value)(-100);
+        
+        assert_eq!(result1, result2);
+        assert_eq!(result2, result3);
+        
+        // If true predicate, should have false shrink
+        if result1 {
+            let shrinks = tree.shrinks();
+            assert!(!shrinks.is_empty(), "True predicate should shrink to false");
+            
+            // Should have a false shrink
+            let has_false_shrink = shrinks.iter().any(|pred| !(pred)(0));
+            assert!(has_false_shrink, "Should shrink to false predicate");
+        }
+    }
+    
+    #[test]
+    fn test_constant_comparator_generator() {
+        let comparator_gen = Gen::<Box<dyn Fn(i32, i32) -> std::cmp::Ordering>>::constant_comparator(std::cmp::Ordering::Equal);
+        
+        let seed = Seed::from_u64(999);
+        let tree = comparator_gen.generate(Size::new(10), seed);
+        
+        // Test comparator properties
+        let cmp_result1 = (tree.value)(1, 2);
+        let cmp_result2 = (tree.value)(1, 2); // Should be deterministic
+        assert_eq!(cmp_result1, cmp_result2);
+        assert_eq!(cmp_result1, std::cmp::Ordering::Equal);
+        
+        // Test reflexivity: compare something to itself
+        let self_cmp = (tree.value)(5, 5);
+        assert_eq!(self_cmp, std::cmp::Ordering::Equal);
+        
+        // Constant comparator has no shrinks (it's already minimal)
+        let shrinks = tree.shrinks();
+        assert!(shrinks.is_empty(), "Constant comparator should have no shrinks");
     }
 
     #[test]

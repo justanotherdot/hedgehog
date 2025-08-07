@@ -7,6 +7,8 @@
 - Variable name tracking in failure reporting  
 - Derive macros for custom types
 - Comprehensive property testing API
+- State machine testing utilities
+- Function generators for higher-order function testing
 
 ## Next Priorities
 
@@ -18,8 +20,6 @@
    - Dictionary support - domain-specific token injection
 
 2. **Major Features** (Week 2: 1 week)
-   - State machine testing - test stateful systems systematically
-   - Function generators - generate functions as test inputs
    - Coverage-guided generation - use coverage feedback
 
 3. **Advanced Features** (Week 3: 1-2 weeks)

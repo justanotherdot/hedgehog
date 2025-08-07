@@ -145,6 +145,13 @@ Unlike type-directed approaches, Hedgehog generators are explicit values you cre
 let gen_small_int = Gen::int_range(1, 10);
 let gen_list = Gen::<Vec<i32>>::vec_of(gen_small_int);
 let gen_pair = Gen::<(i32, String)>::tuple_of(gen_small_int, Gen::<String>::ascii_alpha());
+
+// Generate functions as test inputs
+let gen_function = Gen::<Box<dyn Fn(i32) -> String>>::function_of(
+    Gen::int_range(0, 5),
+    Gen::<String>::ascii_alpha(),
+    "default".to_string()
+);
 ```
 
 ### Distribution Shaping
