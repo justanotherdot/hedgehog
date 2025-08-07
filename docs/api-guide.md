@@ -241,6 +241,272 @@ Gen::one_of(vec![
 ])
 ```
 
+### Function Generators
+
+Function generators are designed for testing **your code** that takes functions as parameters. Instead of testing with a few hardcoded functions, you can test with hundreds of systematically generated functions.
+
+#### The Problem Function Generators Solve
+
+```rust
+// Limited manual testing
+fn test_my_data_processor() {
+    let processor = MyDataProcessor::new();
+    
+    // Only testing with 3 specific transform functions
+    assert_eq!(processor.transform(data.clone(), |x| x * 2).len(), expected1);
+    assert_eq!(processor.transform(data.clone(), |x| x + 1).len(), expected2);  
+    assert_eq!(processor.transform(data.clone(), |x| if x > 5 { x } else { 0 }).len(), expected3);
+    
+    // What about edge cases? What about other function patterns?
+}
+```
+
+#### The Function Generator Solution
+
+```rust
+// Systematic testing with generated functions
+fn test_data_processor_with_function_generators() {
+    // Generate transform functions to test your code with
+    let transform_gen = Gen::<Box<dyn Fn(i32) -> i32>>::function_of(
+        Gen::int_range(1, 10),    // Keyspace: functions might map inputs 1-10
+        Gen::int_range(0, 20),    // Output range: 0-20
+        0                         // Default for unmapped inputs
+    );
+    
+    // Combine data and function generators using tuples
+    // Note: Hedgehog uses single-generator for_all - combine multiple generators manually
+    let test_gen = Gen::new(|size, seed| {
+        let (data_seed, func_seed) = seed.split();
+        let data = Gen::<Vec<i32>>::vec_of(Gen::int_range(1, 10))
+            .generate(size, data_seed).value;
+        let transform = transform_gen.generate(size, func_seed).value;
+        Tree::singleton((data, transform))
+    });
+    
+    let property = for_all(test_gen, |(data, transform)| {
+        let result = MyDataProcessor::new().transform(data.clone(), &*transform);
+        
+        // Test properties of YOUR code with generated functions
+        result.len() <= data.len() &&                    // Sanity check
+        result.iter().all(|&x| x >= 0) &&              // All outputs valid
+        data.is_empty() == result.is_empty()            // Empty preservation
+    });
+    
+    // This tests your code with hundreds of different functions:
+    // {1→15, 3→8, 7→2, default→0}, {2→20, 5→1, default→0}, 
+    // {} (constant function), and many more patterns!
+    property.run(&Config::default());
+}
+```
+
+#### Real-World Use Cases
+
+**Testing Collection Operations:**
+```rust
+// Your code that processes collections with user functions
+pub fn filter_map_collect<T, U>(
+    items: Vec<T>, 
+    filter_fn: impl Fn(&T) -> bool,
+    map_fn: impl Fn(T) -> U
+) -> Vec<U> {
+    items.into_iter()
+        .filter(filter_fn)
+        .map(map_fn)
+        .collect()
+}
+
+// Test with generated predicates and mappers
+let predicate_gen = Gen::<Box<dyn Fn(i32) -> bool>>::predicate_from_set(
+    Gen::<Vec<i32>>::vec_of(Gen::int_range(1, 5))
+);
+let mapper_gen = Gen::<Box<dyn Fn(i32) -> String>>::function_of(
+    Gen::int_range(1, 10),
+    Gen::<String>::ascii_alpha(),
+    "unknown".to_string()
+);
+
+// Property: filtered results should all satisfy the predicate (when mapped back)
+```
+
+**Testing Sorting with Custom Comparators:**
+```rust
+// Your sorting function
+pub fn custom_sort<T>(mut items: Vec<T>, cmp: impl Fn(&T, &T) -> std::cmp::Ordering) -> Vec<T> {
+    items.sort_by(cmp);
+    items
+}
+
+// Test with generated comparators
+let comparator_gen = Gen::<Box<dyn Fn(i32, i32) -> std::cmp::Ordering>>::comparator_from_choices(vec![
+    std::cmp::Ordering::Less,
+    std::cmp::Ordering::Equal,
+    std::cmp::Ordering::Greater,
+]);
+
+// Property: sorted result should be sorted according to the comparator
+let property = for_all(combined_gen, |(data, cmp)| {
+    let sorted = custom_sort(data, &*cmp);
+    // Check that adjacent elements are properly ordered
+    sorted.windows(2).all(|pair| cmp(pair[0], pair[1]) != std::cmp::Ordering::Greater)
+});
+```
+
+#### Function Generator Types
+
+```rust
+// Generate functions from lookup tables (most common)
+let function_gen = Gen::<Box<dyn Fn(i32) -> String>>::function_of(
+    Gen::int_range(0, 5),         // Input keyspace
+    Gen::<String>::ascii_alpha(), // Output generator  
+    "default".to_string()         // Default for unmapped inputs
+);
+
+// Generate constant functions
+let constant_func_gen = Gen::<Box<dyn Fn(i32) -> String>>::constant_function(
+    Gen::constant("hello".to_string())
+);
+
+// Generate identity functions (for compatible types)
+let identity_gen = Gen::<Box<dyn Fn(i32) -> i32>>::identity_function();
+
+// Generate binary functions  
+let binary_func_gen = Gen::<Box<dyn Fn(i32, i32) -> String>>::binary_function_of(
+    Gen::int_range(0, 3), Gen::int_range(0, 3), 
+    Gen::<String>::ascii_alpha(), "default".to_string()
+);
+
+// Generate predicate functions
+let predicate_gen = Gen::<Box<dyn Fn(i32) -> bool>>::predicate_from_set(
+    Gen::<Vec<i32>>::vec_of(Gen::int_range(1, 5))  // Accept these values
+);
+
+// Generate comparator functions
+let comparator_gen = Gen::<Box<dyn Fn(i32, i32) -> std::cmp::Ordering>>::constant_comparator(
+    std::cmp::Ordering::Equal  // Always return Equal
+);
+```
+
+#### How Function Generation Works
+
+Function generators use lookup tables (HashMap) internally to create **finite but representative** functions:
+
+```rust
+// A generated function might behave like this internally:
+// lookup_table = {1 → "apple", 3 → "banana", 7 → "cherry"}
+// default = "unknown"
+
+let f = /* generated function */;
+println!("{}", f(1));   // "apple"   (found in lookup table)
+println!("{}", f(3));   // "banana"  (found in lookup table)  
+println!("{}", f(5));   // "unknown" (not in table, uses default)
+println!("{}", f(99));  // "unknown" (not in table, uses default)
+```
+
+**Why This Works:**
+- **Deterministic:** Same input always produces the same output
+- **Shrinkable:** Large tables shrink to small tables, then to constant functions  
+- **Representative:** Models real-world patterns (dispatch tables, configuration maps, routing tables)
+- **Debuggable:** When tests fail, you see the actual lookup table that caused the failure
+
+**The Keyspace:** The first argument to `function_of` defines which inputs *might* get specific mappings. Larger keyspaces create more varied function behavior:
+
+```rust
+// Small keyspace: only 1,2,3 might be mapped to specific outputs
+Gen::function_of(Gen::int_range(1, 3), output_gen, default)
+
+// Large keyspace: any number 1-100 might be mapped  
+Gen::function_of(Gen::int_range(1, 100), output_gen, default)
+```
+
+#### Key Insight: Testing Function Composition
+
+Function generators excel at finding edge cases in code that chains operations:
+
+```rust
+// Your pipeline function
+pub fn process_pipeline<T>(
+    data: Vec<T>,
+    validator: impl Fn(&T) -> bool,
+    transformer: impl Fn(T) -> T,
+    finalizer: impl Fn(T) -> T,
+) -> Vec<T> {
+    data.into_iter()
+        .filter(validator)       // Step 1: filter
+        .map(transformer)        // Step 2: transform  
+        .map(finalizer)          // Step 3: finalize
+        .collect()
+}
+
+// Generate each function in the pipeline
+let validator_gen = Gen::<Box<dyn Fn(i32) -> bool>>::predicate_from_set(/*...*/);
+let transformer_gen = Gen::<Box<dyn Fn(i32) -> i32>>::function_of(/*...*/);
+let finalizer_gen = Gen::<Box<dyn Fn(i32) -> i32>>::function_of(/*...*/);
+
+// Test that your pipeline behaves correctly with ANY combination of functions
+// This finds interaction bugs between pipeline stages that manual testing misses!
+```
+
+Function generators turn "testing with a few examples" into "testing with systematic exploration of the function space."
+
+#### Scope and Limitations
+
+**What We Generate: First-Order Functions**
+
+Hedgehog generates **first-order functions** - functions that take regular values and return regular values:
+
+```rust
+// ✅ First-order functions (what we generate)
+Gen<Box<dyn Fn(i32) -> String>>         // Takes i32, returns String
+Gen<Box<dyn Fn(User) -> bool>>           // Takes User, returns bool  
+Gen<Box<dyn Fn(i32, i32) -> Ordering>>  // Takes two i32s, returns Ordering
+```
+
+**What We Don't Generate: Higher-Order Functions**
+
+We do **not** generate higher-order functions - functions that take or return other functions:
+
+```rust
+// ❌ Higher-order functions (too complex for Rust's ownership model)
+Gen<Box<dyn Fn(Box<dyn Fn(i32) -> String>) -> Box<dyn Fn(i32) -> bool>>>>
+//           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+//           Takes a function, returns a function
+```
+
+**Why Not Higher-Order?**
+
+Rust's ownership model makes higher-order function generation impractical:
+- Functions don't implement `Clone`, making shrinking impossible
+- Nested closures create lifetime conflicts  
+- Multiple levels of `Box<dyn Fn>` become unwieldy
+- Can't inspect or debug function arguments
+
+**Workaround: The Tuple Trick**
+
+For higher-order testing, generate the "configuration" and let users curry:
+
+```rust
+// Instead of generating: (A -> B) -> (A -> C)  
+// Generate the transformation configuration:
+type TransformConfig = HashMap<(i32, String), bool>;
+let config_gen = Gen::<TransformConfig>::new(/* ... */);
+
+// Users curry this into higher-order forms:
+let make_transformer = |config: TransformConfig| {
+    move |f: Box<dyn Fn(i32) -> String>| {
+        Box::new(move |x: i32| {
+            let intermediate = f(x);
+            config.get(&(x, intermediate)).copied().unwrap_or(false)
+        })
+    }
+};
+
+// Now test your higher-order code:
+let transformer = make_transformer(config_gen.sample());
+let result_fn = transformer(some_first_order_function);
+```
+
+This gives you the power of higher-order testing while working within Rust's constraints.
+
 ## Derive Macros
 
 Hedgehog provides derive macros for automatic generator creation. Enable with the `derive` feature:
