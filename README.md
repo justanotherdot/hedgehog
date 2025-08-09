@@ -12,6 +12,7 @@ Property-based testing library for Rust, inspired by the original [Hedgehog](htt
 - **Distribution shaping** - Control probability distributions for realistic test data
 - **Variable name tracking** - Enhanced failure reporting with named inputs
 - **Property classification** - Inspect test data distribution and statistics
+- **Example integration** - Mix explicit test examples with generated values
 - **Derive macros** - Automatic generator creation for custom types
 
 ## Quick Start
@@ -94,6 +95,38 @@ fn prop_http_status_codes() {
     let prop = for_all_named(status_gen, "status", |&status| {
         status >= 100 && status < 600
     });
+    
+    assert!(matches!(prop.run(&Config::default()), TestResult::Pass { .. }));
+}
+```
+
+### With Example Integration
+
+```rust
+use hedgehog::*;
+
+#[test]
+fn prop_division_safety() {
+    // Critical edge cases that must always be tested
+    let critical_cases = vec![
+        (10, 0),        // Division by zero
+        (i32::MAX, 1),  // Maximum value
+        (i32::MIN, -1), // Potential overflow
+    ];
+    
+    let prop = for_all_named(
+        Gen::<(i32, i32)>::tuple_of(
+            Gen::int_range(-50, 50),
+            Gen::int_range(-5, 5)
+        ), 
+        "input",
+        |&(a, b)| {
+            match safe_divide(a, b) {
+                Some(result) => b != 0 && result == a / b,
+                None => b == 0 || (a == i32::MIN && b == -1)
+            }
+        }
+    ).with_examples(critical_cases); // Examples tested first, then random pairs
     
     assert!(matches!(prop.run(&Config::default()), TestResult::Pass { .. }));
 }
@@ -239,6 +272,44 @@ When a test fails, Hedgehog automatically finds the minimal counterexample:
     Minimal counterexample: []
 ```
 
+### Example Integration
+
+Mix explicit test examples with property-based testing to ensure critical edge cases are always tested:
+
+```rust
+// Test a division function with known problematic cases
+let critical_cases = vec![
+    (10, 0),        // Division by zero
+    (i32::MAX, 1),  // Maximum value
+    (i32::MIN, -1), // Potential overflow
+];
+
+let prop = for_all(
+    Gen::<(i32, i32)>::tuple_of(
+        Gen::int_range(-100, 100), 
+        Gen::int_range(-10, 10)
+    ),
+    |&(a, b)| {
+        match safe_divide(a, b) {
+            Some(result) => b != 0 && result == a / b,
+            None => b == 0 || (a == i32::MIN && b == -1)
+        }
+    }
+).with_examples(critical_cases); // Examples tested first, then random generation
+
+// Choose different integration strategies:
+use hedgehog::property::ExampleStrategy;
+
+// Mix examples throughout testing
+prop.with_examples_strategy(examples, ExampleStrategy::Mixed);
+
+// Generate first, then examples, then generate more  
+prop.with_examples_strategy(examples, ExampleStrategy::GeneratedFirst);
+
+// Test examples only for first 5 tests  
+prop.with_examples_strategy(examples, ExampleStrategy::ExamplesUpTo(5));
+```
+
 ## Documentation
 
 - **[API Guide](docs/api-guide.md)** - Comprehensive API reference and examples
@@ -260,6 +331,12 @@ cargo run --example variable-name-tracking
 
 # Property classification examples
 cargo run --example classification
+
+# Example integration examples
+cargo run --example example-integration
+
+# Function generator examples
+cargo run --example function-generators
 
 # Basic usage examples
 cargo run --example basic
