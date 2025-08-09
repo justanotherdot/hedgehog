@@ -159,8 +159,8 @@ where
     ///
     /// # Example
     /// ```rust
-    /// use hedgehog::*;
-    /// use hedgehog::property::ExampleStrategy;
+    /// use hedgehog_core::*;
+    /// use hedgehog_core::property::ExampleStrategy;
     /// 
     /// // Examples tested first (default)
     /// let prop1 = for_all(Gen::int_range(1, 100), |&n| n > 0)
