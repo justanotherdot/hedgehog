@@ -37,6 +37,30 @@ match result.outcome {
 }
 ```
 
+### Concurrent Race Condition Testing
+
+For detecting non-deterministic behavior and race conditions, use `for_all_concurrent`:
+
+```rust
+use hedgehog_core::*;
+
+// Test the same input from multiple threads simultaneously to detect races
+let prop = for_all_concurrent(
+    Gen::int_range(1, 100),
+    |&n| shared_system.process(n).is_ok(), // Your concurrent operation
+    8 // Test from 8 threads simultaneously
+);
+
+let results = prop.run(&Config::default().with_tests(50));
+
+for (i, result) in results.iter().enumerate() {
+    if !result.deterministic {
+        println!("⚠ Race condition detected in test {}", i);
+        println!("  {} different results across {} threads", 
+                 result.race_conditions_detected, result.results.len());
+    }
+}
+```
 ### Advanced Configuration
 
 For more control over parallel execution, use `parallel_property` with custom configuration:

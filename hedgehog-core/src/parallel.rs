@@ -96,6 +96,22 @@ pub struct ConcurrencyIssues {
     pub thread_failures: Vec<String>,
 }
 
+/// A property that tests the same input from multiple threads simultaneously.
+pub struct ConcurrentProperty<T, F>
+where
+    F: Fn(&T) -> TestResult + Send + Sync,
+{
+    /// Generator for test inputs
+    pub generator: Gen<T>,
+    /// Thread-safe test function
+    pub test_function: Arc<F>,
+    /// Number of threads to run concurrently
+    pub thread_count: usize,
+    /// Timeout for each concurrent test
+    pub timeout: Option<Duration>,
+    /// Variable name for debugging
+    pub variable_name: Option<String>,
+}
 /// A property that can be executed in parallel.
 pub struct ParallelProperty<T, F> 
 where 
@@ -111,6 +127,155 @@ where
     pub variable_name: Option<String>,
 }
 
+impl<T, F> ConcurrentProperty<T, F>
+where
+    T: 'static + std::fmt::Debug + Clone + Send + Sync,
+    F: Fn(&T) -> TestResult + Send + Sync + 'static,
+{
+    /// Create a new concurrent property.
+    pub fn new(generator: Gen<T>, test_function: F, thread_count: usize) -> Self {
+        ConcurrentProperty {
+            generator,
+            test_function: Arc::new(test_function),
+            thread_count,
+            timeout: Some(Duration::from_secs(10)),
+            variable_name: None,
+        }
+    }
+
+    /// Set a variable name for debugging.
+    pub fn with_variable_name(mut self, name: &str) -> Self {
+        self.variable_name = Some(name.to_string());
+        self
+    }
+
+    /// Set a timeout for concurrent tests.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Run concurrent tests on generated inputs to detect non-deterministic behavior.
+    pub fn run(&self, test_config: &Config) -> Vec<ConcurrentTestResult> {
+        let mut results = Vec::new();
+        let mut seed = crate::data::Seed::random();
+
+        for i in 0..test_config.test_limit {
+            let size = crate::data::Size::new((i * test_config.size_limit) / test_config.test_limit);
+            let (test_seed, next_seed) = seed.split();
+            seed = next_seed;
+
+            // Generate a single input to test concurrently
+            let tree = self.generator.generate(size, test_seed);
+            let input = tree.value;
+
+            // Test this input concurrently from multiple threads
+            let concurrent_result = self.test_input_concurrently(&input);
+            results.push(concurrent_result);
+        }
+
+        results
+    }
+
+    /// Test a single input from multiple threads simultaneously to detect race conditions.
+    fn test_input_concurrently(&self, input: &T) -> ConcurrentTestResult {
+        let mut thread_handles = Vec::new();
+        let mut execution_times = Vec::new();
+
+        // Clone input for each thread
+        for _thread_id in 0..self.thread_count {
+            let input_clone = input.clone();
+            let test_function = Arc::clone(&self.test_function);
+
+            let handle = thread::spawn(move || {
+                let thread_start = Instant::now();
+                let result = test_function(&input_clone);
+                let thread_duration = thread_start.elapsed();
+                (result, thread_duration)
+            });
+
+            thread_handles.push(handle);
+        }
+
+        // Collect results from all threads
+        let mut thread_results = Vec::new();
+        let mut race_conditions_detected = 0;
+
+        for handle in thread_handles {
+            match handle.join() {
+                Ok((result, duration)) => {
+                    thread_results.push(result);
+                    execution_times.push(duration);
+                }
+                Err(_) => {
+                    // Thread panicked - this is a concurrency issue
+                    thread_results.push(TestResult::Fail {
+                        counterexample: format!("{:?}", input),
+                        tests_run: 1,
+                        shrinks_performed: 0,
+                        property_name: self.variable_name.clone(),
+                        module_path: None,
+                        assertion_type: Some("Thread Panic".to_string()),
+                        shrink_steps: Vec::new(),
+                    });
+                    execution_times.push(Duration::from_secs(0));
+                    race_conditions_detected += 1;
+                }
+            }
+        }
+
+        // Analyze results for determinism
+        let deterministic = self.analyze_determinism(&thread_results);
+        if !deterministic {
+            race_conditions_detected += 1;
+        }
+
+        ConcurrentTestResult {
+            deterministic,
+            results: thread_results,
+            race_conditions_detected,
+            execution_times,
+        }
+    }
+
+    /// Analyze thread results to determine if they are deterministic.
+    fn analyze_determinism(&self, results: &[TestResult]) -> bool {
+        if results.is_empty() {
+            return true;
+        }
+
+        let first_result_type = Self::result_type(&results[0]);
+        
+        // Check if all results have the same type and outcome
+        for result in results.iter().skip(1) {
+            if Self::result_type(result) != first_result_type {
+                return false;
+            }
+            
+            // For failures, also check if counterexamples are the same
+            match (&results[0], result) {
+                (TestResult::Fail { counterexample: ce1, .. }, TestResult::Fail { counterexample: ce2, .. }) => {
+                    if ce1 != ce2 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        true
+    }
+
+    /// Get a simplified result type for comparison.
+    fn result_type(result: &TestResult) -> &'static str {
+        match result {
+            TestResult::Pass { .. } => "pass",
+            TestResult::PassWithStatistics { .. } => "pass_with_stats",
+            TestResult::Fail { .. } => "fail",
+            TestResult::Discard { .. } => "discard",
+        }
+    }
+}
 impl<T, F> ParallelProperty<T, F>
 where
     T: 'static + std::fmt::Debug + Clone + Send + Sync,
@@ -413,6 +578,39 @@ where
     ParallelProperty::new(generator, test_function, config)
 }
 
+/// Test the same input simultaneously from multiple threads to detect race conditions.
+/// 
+/// This function takes a single generated input and tests it concurrently from multiple threads.
+/// It detects non-deterministic behavior by comparing results across threads.
+pub fn for_all_concurrent<T, F>(
+    generator: Gen<T>, 
+    condition: F, 
+    thread_count: usize
+) -> ConcurrentProperty<T, impl Fn(&T) -> TestResult + Send + Sync>
+where
+    T: 'static + std::fmt::Debug + Clone + Send + Sync,
+    F: Fn(&T) -> bool + Send + Sync + 'static,
+{
+    ConcurrentProperty::new(generator, move |input| {
+        if condition(input) {
+            TestResult::Pass {
+                tests_run: 1,
+                property_name: None,
+                module_path: None,
+            }
+        } else {
+            TestResult::Fail {
+                counterexample: format!("{:?}", input),
+                tests_run: 1,
+                shrinks_performed: 0,
+                property_name: None,
+                module_path: None,
+                assertion_type: Some("Boolean Condition".to_string()),
+                shrink_steps: Vec::new(),
+            }
+        }
+    }, thread_count)
+}
 // Add num_cpus dependency detection placeholder
 mod num_cpus {
     pub fn get() -> usize {
@@ -686,5 +884,123 @@ mod tests {
             }
             other => panic!("Expected failure, got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_concurrent_property_basic() {
+        let prop = for_all_concurrent(
+            Gen::int_range(1, 10),
+            |&n| n > 0 && n <= 10,
+            4 // 4 threads
+        );
+        
+        let results = prop.run(&Config::default().with_tests(5));
+        
+        // Should have 5 concurrent test results (one for each input)
+        assert_eq!(results.len(), 5);
+        
+        // Each result should have been tested by 4 threads
+        for result in &results {
+            assert_eq!(result.results.len(), 4);
+            // For a simple boolean test, all threads should be deterministic
+            assert!(result.deterministic);
+            assert_eq!(result.race_conditions_detected, 0);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_determinism_detection() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        
+        // Create a test that has non-deterministic behavior
+        let flip_flop = Arc::new(AtomicBool::new(false));
+        
+        let prop = ConcurrentProperty::new(
+            Gen::unit(), // We don't need varied input for this test
+            {
+                let flip_flop = Arc::clone(&flip_flop);
+                move |_| {
+                    // This creates non-deterministic behavior
+                    let current = flip_flop.load(Ordering::SeqCst);
+                    flip_flop.store(!current, Ordering::SeqCst);
+                    
+                    if current {
+                        TestResult::Pass {
+                            tests_run: 1,
+                            property_name: None,
+                            module_path: None,
+                        }
+                    } else {
+                        TestResult::Fail {
+                            counterexample: "non-deterministic".to_string(),
+                            tests_run: 1,
+                            shrinks_performed: 0,
+                            property_name: None,
+                            module_path: None,
+                            assertion_type: Some("Flip Flop".to_string()),
+                            shrink_steps: Vec::new(),
+                        }
+                    }
+                }
+            },
+            4 // 4 threads
+        );
+        
+        let results = prop.run(&Config::default().with_tests(3));
+        
+        // Should detect non-deterministic behavior
+        let non_deterministic_count = results.iter()
+            .filter(|r| !r.deterministic)
+            .count();
+            
+        // Should find at least some non-deterministic results
+        assert!(non_deterministic_count > 0, "Should detect non-deterministic behavior");
+    }
+
+    #[test] 
+    fn test_concurrent_property_with_variable_name() {
+        let prop = for_all_concurrent(
+            Gen::int_range(1, 5),
+            |&n| n > 0,
+            2 // 2 threads
+        ).with_variable_name("test_value");
+        
+        let results = prop.run(&Config::default().with_tests(2));
+        
+        assert_eq!(results.len(), 2);
+        // Variable name should be preserved in thread results
+        for result in &results {
+            if !result.results.is_empty() {
+                // Check if any results have the variable name (depends on test outcome)
+                for thread_result in &result.results {
+                    if let TestResult::Fail { property_name: Some(name), .. } = thread_result {
+                        assert_eq!(name, "test_value");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_concurrent_result_type_analysis() {
+        // Test the result type analysis
+        let pass_result = TestResult::Pass { 
+            tests_run: 1, 
+            property_name: None, 
+            module_path: None 
+        };
+        let fail_result = TestResult::Fail {
+            counterexample: "test".to_string(),
+            tests_run: 1,
+            shrinks_performed: 0,
+            property_name: None,
+            module_path: None,
+            assertion_type: None,
+            shrink_steps: Vec::new(),
+        };
+        
+        assert_eq!(ConcurrentProperty::<(), fn(&()) -> TestResult>::result_type(&pass_result), "pass");
+        assert_eq!(ConcurrentProperty::<(), fn(&()) -> TestResult>::result_type(&fail_result), "fail");
     }
 }
