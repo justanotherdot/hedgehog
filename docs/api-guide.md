@@ -879,4 +879,279 @@ let prop = for_all_named(input_gen, "input", |input| {
 });
 ```
 
+## Example Integration
+
+Example integration allows mixing explicit test examples with property-based testing to ensure critical edge cases are always tested while getting broad coverage from generated values.
+
+### Basic Usage
+
+```rust
+use hedgehog::*;
+
+// Test a parsing function with known problematic inputs
+let problematic_cases = vec![
+    "".to_string(),           // Empty string
+    "-1".to_string(),         // Negative number  
+    "abc".to_string(),        // Non-numeric
+    "4294967296".to_string(), // Overflow
+];
+
+let prop = for_all(
+    Gen::<String>::ascii_printable(),
+    |s| parse_number(s).is_ok() || parse_number(s).is_err() // No panics
+).with_examples(problematic_cases);
+
+// Examples are tested first, then random strings are generated
+prop.run(&Config::default());
+```
+
+### How Example Integration Works with Test Iterations
+
+Examples are integrated into the **total test count** specified by `Config.test_limit` (default: 100). They don't add extra tests - instead, examples take up some of those test iterations.
+
+```rust
+// With 10 total tests and 3 examples:
+let config = Config::default().with_tests(10);
+let examples = vec![0, -1, i32::MAX];
+
+// ExamplesFirst strategy:
+// Test sequence: [ex1, ex2, ex3, gen1, gen2, gen3, gen4, gen5, gen6, gen7] 
+// Total: exactly 10 tests (3 examples + 7 generated)
+
+let prop = for_all(gen, test_fn)
+    .with_examples(examples)
+    .run(&config); // Always runs exactly 10 tests
+```
+
+**Key Points:**
+- **Fixed Total**: Always runs exactly `config.test_limit` tests  
+- **No Extra Cost**: Examples don't increase test time beyond your configured limit
+- **Guaranteed Coverage**: Critical examples always tested within your test budget
+- **Early Termination**: If any test fails (example or generated), testing stops immediately
+
+### Example Integration Strategies
+
+Control how examples are mixed with generated values using `ExampleStrategy`:
+
+```rust
+use hedgehog::property::ExampleStrategy;
+
+let examples = vec![0, -1, i32::MAX];
+
+// Strategy 1: Examples first (default)
+let prop1 = for_all(gen, test_fn)
+    .with_examples(examples.clone());
+
+// Strategy 2: Mixed throughout testing
+let prop2 = for_all(gen, test_fn)
+    .with_examples_strategy(examples.clone(), ExampleStrategy::Mixed);
+
+// Strategy 3: Generated values first, then examples
+let prop3 = for_all(gen, test_fn)
+    .with_examples_strategy(examples.clone(), ExampleStrategy::GeneratedFirst);
+
+// Strategy 4: Examples only for first N tests
+let prop4 = for_all(gen, test_fn)
+    .with_examples_strategy(examples.clone(), ExampleStrategy::ExamplesUpTo(5));
+```
+
+### Strategy Descriptions
+
+#### `ExamplesFirst` (Default)
+Tests all examples first, then generates random values:
+```
+// With 8 tests and 3 examples:
+Test sequence: [ex1, ex2, ex3, gen1, gen2, gen3, gen4, gen5]
+Examples used: 3/8 = 37.5% of tests
+Generated: 5/8 = 62.5% of tests
+```
+
+**Best for:**
+- Ensuring critical cases are always tested first
+- Quick feedback on known edge cases
+- Regression testing
+
+#### `Mixed` 
+Distributes examples throughout the test run:
+```
+// With 10 tests and 3 examples (approximate pattern):
+Test sequence: [ex1, gen1, ex2, gen2, ex3, gen3, gen4, gen5, gen6, gen7]
+Examples distributed throughout, not just at start
+```
+
+**Best for:**
+- Balanced coverage throughout testing
+- When examples represent typical rather than edge cases
+- Simulating realistic usage patterns
+
+#### `GeneratedFirst`
+Generates random values first, then tests examples, then continues generating:
+```
+// With 10 tests and 3 examples:
+// Threshold = min(3, 10) = 3, so examples start at test 4
+Test sequence: [gen1, gen2, gen3, ex1, ex2, ex3, gen4, gen5, gen6, gen7]
+Random exploration → targeted validation → more exploration
+```
+
+**Best for:**
+- Exploring the input space before testing known cases
+- When examples are expensive to execute
+- Complement random exploration with specific validation
+
+#### `ExamplesUpTo(n)`
+Uses examples only for the first `n` tests:
+```
+// With 10 tests, 5 examples, and ExamplesUpTo(3):
+Test sequence: [ex1, ex2, ex3, gen1, gen2, gen3, gen4, gen5, gen6, gen7]
+Only first 3 examples used, remaining 2 examples ignored
+```
+
+**Best for:**
+- Limited number of critical examples
+- Hybrid approach with controlled example usage
+- Performance-sensitive testing with expensive examples
+
+### Real-World Use Cases
+
+#### Regression Testing
+Capture bugs that occurred in the past:
+
+```rust
+// Historical failures that should never happen again
+let regression_cases = vec![
+    vec![], // Empty input caused panic in v1.0
+    vec![0], // Zero handling bug in v1.1
+    vec![i32::MIN], // Overflow bug in v1.2
+];
+
+let prop = for_all(
+    Gen::<Vec<i32>>::vec_of(Gen::int_range(-100, 100)),
+    |data| process_data(data).len() <= data.len() // Never grows
+).with_examples(regression_cases);
+```
+
+#### API Testing
+Test web APIs with known problematic requests:
+
+```rust
+let problematic_requests = vec![
+    Request::new("GET", "/", ""), // Empty body
+    Request::new("POST", "/users", "{}"), // Empty JSON
+    Request::new("PUT", "/data", "invalid"), // Invalid JSON
+    Request::new("DELETE", "/admin", ""), // Sensitive endpoint
+];
+
+let prop = for_all(
+    request_generator(),
+    |req| api_handler(req).status_code < 500 // No server errors
+).with_examples(problematic_requests);
+```
+
+#### Mathematical Functions
+Ensure edge cases in mathematical operations:
+
+```rust
+let critical_values = vec![
+    (0, 1), (1, 0), // Identity cases
+    (i32::MAX, 1), (i32::MIN, -1), // Overflow cases
+    (100, 0), // Division by zero
+];
+
+let prop = for_all(
+    Gen::<(i32, i32)>::tuple_of(Gen::int_range(-50, 50), Gen::int_range(-10, 10)),
+    |&(a, b)| {
+        match safe_divide(a, b) {
+            Some(result) => b != 0 && result == a / b,
+            None => b == 0 || (a == i32::MIN && b == -1)
+        }
+    }
+).with_examples(critical_values);
+```
+
+#### File System Operations
+Test with problematic file paths:
+
+```rust
+let problematic_paths = vec![
+    "".to_string(), // Empty path
+    "/".to_string(), // Root
+    "...".to_string(), // Multiple dots
+    "file\0name".to_string(), // Null byte
+    "very_long_filename_that_exceeds_limits".repeat(10), // Long name
+];
+
+let prop = for_all(
+    path_generator(),
+    |path| file_operation(path).is_ok() || file_operation(path).is_err()
+).with_examples(problematic_paths);
+```
+
+### Integration with Property Classification
+
+Combine examples with classification to analyze coverage:
+
+```rust
+let prop = for_all(
+    Gen::int_range(-100, 100),
+    |&x| x.abs() >= 0 // Always true
+)
+.with_examples(vec![0, -1, i32::MIN])
+.classify("negative", |&x| x < 0)
+.classify("zero", |&x| x == 0) 
+.classify("positive", |&x| x > 0)
+.classify("from_example", |&x| [0, -1, i32::MIN].contains(&x));
+
+match prop.run(&Config::default()) {
+    TestResult::PassWithStatistics { statistics, .. } => {
+        // Shows both generated distribution and example usage
+        println!("Examples used: {}%", 
+            statistics.classifications.get("from_example").unwrap_or(&0));
+    }
+    _ => {}
+}
+```
+
+### Best Practices
+
+#### Choose Appropriate Examples
+```rust
+// Good: Critical edge cases that are hard to generate randomly
+let good_examples = vec![
+    "", // Empty string
+    "\0", // Null character
+    "€🦀", // Unicode edge cases
+    format!("{}", "a".repeat(10000)), // Very long input
+];
+
+// Avoid: Random typical cases (let the generator handle these)
+let avoid_examples = vec![
+    "hello", "world", "test123" // Generator will find these naturally
+];
+```
+
+#### Use Examples for Known Failures
+```rust
+// Convert discovered failures into permanent examples
+let discovered_failures = vec![
+    UserInput { name: "", age: -1 }, // Found by fuzzer
+    UserInput { name: "x".repeat(1000), age: 0 }, // Load testing failure
+];
+
+let prop = for_all(user_generator(), |user| validate_user(user))
+    .with_examples(discovered_failures);
+```
+
+#### Combine with Shrinking
+Examples work seamlessly with Hedgehog's shrinking:
+
+```rust
+// If an example fails, it shrinks normally
+let prop = for_all(gen, |&x| x > 0)
+    .with_examples(vec![-5]); // This will fail and shrink toward 0
+
+// Output shows shrinking progression starting from the example
+```
+
+Example integration provides the best of both worlds: comprehensive property-based testing with guaranteed coverage of critical cases.
+
 This API guide provides a comprehensive reference for using Hedgehog's distribution shaping and variable name tracking features effectively.

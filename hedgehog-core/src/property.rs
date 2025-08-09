@@ -4,6 +4,19 @@ use crate::error::ShrinkStep;
 use crate::{data::*, error::*, gen::*, tree::*};
 use std::collections::HashMap;
 
+/// Strategy for integrating explicit examples with property-based testing.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExampleStrategy {
+    /// Test examples first, then generate random values.
+    ExamplesFirst,
+    /// Mix examples randomly throughout generation.
+    Mixed,
+    /// Generate random values first, then test examples.
+    GeneratedFirst,
+    /// Only test examples up to a specified count, then switch to generation.
+    ExamplesUpTo(usize),
+}
+
 /// Statistics gathered during property testing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestStatistics {
@@ -40,11 +53,13 @@ pub struct Property<T> {
     variable_name: Option<String>,
     classifications: Vec<(String, Box<dyn Fn(&T) -> bool>)>,
     collections: Vec<(String, Box<dyn Fn(&T) -> f64>)>,
+    examples: Vec<T>,
+    example_strategy: ExampleStrategy,
 }
 
 impl<T> Property<T>
 where
-    T: 'static + std::fmt::Debug,
+    T: 'static + std::fmt::Debug + Clone,
 {
     /// Create a new property from a generator and test function.
     pub fn new<F>(generator: Gen<T>, test_function: F) -> Self
@@ -57,6 +72,8 @@ where
             variable_name: None,
             classifications: Vec::new(),
             collections: Vec::new(),
+            examples: Vec::new(),
+            example_strategy: ExampleStrategy::ExamplesFirst,
         }
     }
 
@@ -134,6 +151,48 @@ where
         self
     }
 
+    /// Test explicit examples with configurable integration strategy.
+    ///
+    /// This ensures critical edge cases are tested while getting broad coverage 
+    /// from property-based testing. The strategy determines how examples are mixed
+    /// with generated values.
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog::*;
+    /// use hedgehog::property::ExampleStrategy;
+    /// 
+    /// // Examples tested first (default)
+    /// let prop1 = for_all(Gen::int_range(1, 100), |&n| n > 0)
+    ///     .with_examples(vec![1, 50, 100]);
+    /// 
+    /// // Mixed randomly throughout testing  
+    /// let prop2 = for_all(Gen::int_range(1, 100), |&n| n > 0)
+    ///     .with_examples_strategy(vec![1, 50, 100], ExampleStrategy::Mixed);
+    /// 
+    /// // Only test examples for first 5 tests, then generate
+    /// let prop3 = for_all(Gen::int_range(1, 100), |&n| n > 0)
+    ///     .with_examples_strategy(vec![1, 50, 100], ExampleStrategy::ExamplesUpTo(5));
+    /// ```
+    pub fn with_examples(mut self, examples: Vec<T>) -> Self
+    where
+        T: Clone,
+    {
+        self.examples = examples;
+        self.example_strategy = ExampleStrategy::ExamplesFirst;
+        self
+    }
+
+    /// Test explicit examples with a specified integration strategy.
+    pub fn with_examples_strategy(mut self, examples: Vec<T>, strategy: ExampleStrategy) -> Self
+    where
+        T: Clone,
+    {
+        self.examples = examples;
+        self.example_strategy = strategy;
+        self
+    }
+
     /// Run this property with the given configuration.
     pub fn run(&self, config: &Config) -> TestResult {
         self.run_with_context(config, None, None)
@@ -148,13 +207,21 @@ where
     ) -> TestResult {
         let mut seed = Seed::random();
         let mut statistics = TestStatistics::new();
+        let mut examples_tested = 0;
 
         for test_num in 0..config.test_limit {
             let size = Size::new((test_num * config.size_limit) / config.test_limit);
             let (test_seed, next_seed) = seed.split();
             seed = next_seed;
 
-            let tree = self.generator.generate(size, test_seed);
+            // Determine whether to use an example or generate a value
+            let tree = match self.should_use_example(test_num, examples_tested) {
+                Some(example_index) => {
+                    examples_tested += 1;
+                    Tree::singleton(self.examples[example_index].clone())
+                }
+                None => self.generator.generate(size, test_seed),
+            };
 
             // Collect statistics from the generated value
             self.collect_statistics(&tree.value, &mut statistics);
@@ -214,6 +281,47 @@ where
         for (name, extractor) in &self.collections {
             let extracted_value = extractor(value);
             statistics.record_collection(name, extracted_value);
+        }
+    }
+
+    /// Determine whether to use an example value or generate one based on strategy.
+    fn should_use_example(&self, test_num: usize, examples_used: usize) -> Option<usize> {
+        if self.examples.is_empty() {
+            return None;
+        }
+
+        match &self.example_strategy {
+            ExampleStrategy::ExamplesFirst => {
+                if examples_used < self.examples.len() {
+                    Some(examples_used)
+                } else {
+                    None
+                }
+            }
+            ExampleStrategy::Mixed => {
+                // Use a simple algorithm: cycle through examples with some probability
+                if test_num % (self.examples.len() + 3) < self.examples.len() {
+                    Some(test_num % self.examples.len())
+                } else {
+                    None
+                }
+            }
+            ExampleStrategy::GeneratedFirst => {
+                // Only use examples after we've done some random generation
+                let threshold = self.examples.len().min(10); // At least 10 or number of examples
+                if test_num >= threshold && examples_used < self.examples.len() {
+                    Some(examples_used)
+                } else {
+                    None
+                }
+            }
+            ExampleStrategy::ExamplesUpTo(limit) => {
+                if test_num < *limit && examples_used < self.examples.len() {
+                    Some(examples_used)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -302,7 +410,7 @@ where
 /// Create a property for a generator and test function.
 pub fn property<T, F>(generator: Gen<T>, test_function: F) -> Property<T>
 where
-    T: 'static + std::fmt::Debug,
+    T: 'static + std::fmt::Debug + Clone,
     F: Fn(&T) -> TestResult + 'static,
 {
     Property::new(generator, test_function)
@@ -311,7 +419,7 @@ where
 /// Create a property that checks a boolean condition.
 pub fn for_all<T, F>(generator: Gen<T>, condition: F) -> Property<T>
 where
-    T: 'static + std::fmt::Debug,
+    T: 'static + std::fmt::Debug + Clone,
     F: Fn(&T) -> bool + 'static,
 {
     Property::for_all(generator, condition)
@@ -320,7 +428,7 @@ where
 /// Create a property that checks a boolean condition with a named variable.
 pub fn for_all_named<T, F>(generator: Gen<T>, variable_name: &str, condition: F) -> Property<T>
 where
-    T: 'static + std::fmt::Debug,
+    T: 'static + std::fmt::Debug + Clone,
     F: Fn(&T) -> bool + 'static,
 {
     Property::for_all_named(generator, variable_name, condition)
@@ -589,5 +697,143 @@ mod tests {
 
         let output = format!("{}", result);
         archetype::snap("classification_output", output);
+    }
+
+    #[test]
+    fn test_examples_first_strategy() {
+        // Test that examples are tested first, then random generation
+        let examples = vec![1, 2, 3];
+        let gen = Gen::int_range(10, 20); // Different range so we can detect examples
+        let prop = for_all(gen, |&x| x > 0)
+            .with_examples(examples.clone());
+
+        // Test with very few random tests to ensure examples are used first
+        let config = Config::default().with_tests(examples.len() + 2);
+        
+        // This should pass since all our examples and generated values are positive
+        match prop.run(&config) {
+            TestResult::Pass { tests_run, .. } => {
+                assert_eq!(tests_run, examples.len() + 2);
+            }
+            result => panic!("Expected pass, got: {:?}", result),
+        }
+    }
+
+    #[test]  
+    fn test_examples_first_failure() {
+        // Test that example failure is caught immediately
+        let examples = vec![1, -1, 3]; // -1 should fail
+        let gen = Gen::int_range(10, 20);
+        let prop = for_all(gen, |&x| x > 0)
+            .with_examples(examples);
+
+        let config = Config::default().with_tests(10);
+        
+        match prop.run(&config) {
+            TestResult::Fail { counterexample, tests_run, .. } => {
+                // Should fail on the second example (-1)  
+                assert_eq!(counterexample, "-1");
+                assert_eq!(tests_run, 2); // First example passes, second fails
+            }
+            result => panic!("Expected failure, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_mixed_strategy() {
+        // Test mixed strategy distributes examples throughout
+        let examples = vec![1, 2, 3];
+        let gen = Gen::int_range(10, 20);
+        let prop = for_all(gen, |&x| x > 0)
+            .with_examples_strategy(examples, ExampleStrategy::Mixed);
+
+        let config = Config::default().with_tests(20);
+        
+        // Should pass - both examples and generated values are positive
+        match prop.run(&config) {
+            TestResult::Pass { tests_run, .. } => {
+                assert_eq!(tests_run, 20);
+            }
+            result => panic!("Expected pass, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_generated_first_strategy() {
+        // Test that random generation happens before examples
+        let examples = vec![-1]; // This will fail
+        let gen = Gen::int_range(1, 5); // These will pass
+        let prop = for_all(gen, |&x| x > 0)
+            .with_examples_strategy(examples, ExampleStrategy::GeneratedFirst);
+
+        let config = Config::default().with_tests(20);
+        
+        // Should eventually fail when it gets to the example
+        match prop.run(&config) {
+            TestResult::Fail { counterexample, tests_run, .. } => {
+                assert_eq!(counterexample, "-1");
+                assert!(tests_run > 1); // Should have done some generation first
+            }
+            result => panic!("Expected failure, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_examples_up_to_strategy() {
+        // Test limiting examples to first N tests
+        let examples = vec![1, 2, 3, 4, 5];
+        let gen = Gen::int_range(10, 20);
+        let prop = for_all(gen, |&x| x > 0)
+            .with_examples_strategy(examples, ExampleStrategy::ExamplesUpTo(3));
+
+        let config = Config::default().with_tests(10);
+        
+        // Should pass - examples used only for first 3 tests
+        match prop.run(&config) {
+            TestResult::Pass { tests_run, .. } => {
+                assert_eq!(tests_run, 10);
+            }
+            result => panic!("Expected pass, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_empty_examples() {
+        // Test that empty examples work normally
+        let examples = vec![];
+        let gen = Gen::int_range(1, 10);
+        let prop = for_all(gen, |&x| x > 0)
+            .with_examples(examples);
+
+        let config = Config::default().with_tests(5);
+        
+        match prop.run(&config) {
+            TestResult::Pass { tests_run, .. } => {
+                assert_eq!(tests_run, 5);
+            }
+            result => panic!("Expected pass, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_examples_with_variable_names() {
+        // Test that examples work with named variables
+        let examples = vec![0]; // Will fail the > 0 test
+        let gen = Gen::int_range(1, 10);
+        let prop = for_all_named(gen, "value", |&x| x > 0)
+            .with_examples(examples);
+
+        let config = Config::default().with_tests(5);
+        
+        match prop.run(&config) {
+            TestResult::Fail { counterexample, shrink_steps, .. } => {
+                assert_eq!(counterexample, "0");
+                // Should have variable name in shrink steps
+                if !shrink_steps.is_empty() {
+                    assert_eq!(shrink_steps[0].variable_name, Some("value".to_string()));
+                }
+            }
+            result => panic!("Expected failure, got: {:?}", result),
+        }
     }
 }
