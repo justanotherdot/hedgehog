@@ -1,6 +1,8 @@
 # Targeted Property Testing: PROPER vs Hedgehog Comparison
 
-This document compares the targeted property-based testing implementations between PROPER (Erlang) and our Hedgehog (Rust) implementation.
+This document compares different approaches to targeted property-based testing, examining PROPER's implementation in Erlang and Hedgehog's implementation in Rust.
+
+Both implementations are based on the research presented in "Targeted property-based testing" by Andreas Löscher and Konstantinos Sagonas (ISSTA 2017), available at: http://proper.softlab.ntua.gr/papers/issta2017.pdf
 
 ## Architecture Overview
 
@@ -365,4 +367,4 @@ The choice between them depends on:
 - **Use PROPER** when you want automatic neighborhood generation and seamless integration with existing property tests
 - **Use Hedgehog** when you need detailed search statistics, explicit control, and compile-time safety guarantees
 
-Our Hedgehog implementation successfully captures the core concepts from PROPER while adapting them to Rust's type system and providing enhanced observability into the search process.
+Both implementations demonstrate effective approaches to targeted property testing, with different architectural choices suited to their respective ecosystems and use cases.
