@@ -13,6 +13,7 @@ Property-based testing library for Rust, inspired by the original [Hedgehog](htt
 - **Variable name tracking** - Enhanced failure reporting with named inputs
 - **Property classification** - Inspect test data distribution and statistics
 - **Example integration** - Mix explicit test examples with generated values
+- **Dictionary support** - Inject domain-specific realistic values (HTTP codes, SQL keywords, web domains)
 - **Derive macros** - Automatic generator creation for custom types
 
 ## Quick Start
@@ -334,6 +335,9 @@ cargo run --example classification
 
 # Example integration examples
 cargo run --example example-integration
+
+# Dictionary support examples
+cargo run --example dictionary-support
 
 # Function generator examples
 cargo run --example function-generators

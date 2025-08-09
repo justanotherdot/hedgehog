@@ -10,13 +10,11 @@
 - State machine testing utilities
 - Function generators for higher-order function testing
 - Example integration with configurable strategies
+- Dictionary support - domain-specific token injection (web domains, HTTP codes, SQL keywords, etc.)
 
 ## Next Priorities
 
 **Note**: Based on implementation velocity, these features can be completed in 2-3 weeks total.
-
-1. **Core Extensions** (Week 1: 3-4 days)
-   - Dictionary support - domain-specific token injection
 
 2. **Major Features** (Week 2: 1 week)
    - Coverage-guided generation - use coverage feedback

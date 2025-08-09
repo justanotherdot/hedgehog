@@ -507,6 +507,548 @@ let result_fn = transformer(some_first_order_function);
 
 This gives you the power of higher-order testing while working within Rust's constraints.
 
+## Dictionary Support
+
+Dictionary support allows you to inject domain-specific realistic values into your property-based tests. This is essential for testing with meaningful data that exercises real-world edge cases and scenarios.
+
+### Design Philosophy
+
+Hedgehog's dictionary support follows key design principles that distinguish it from other approaches:
+
+#### 1. **Composable Architecture**
+All built-in domain generators are constructed from the same core API primitives (`from_elements`, `from_dictionary`) that users have access to. This means:
+
+- **No magic**: Users can recreate any built-in generator
+- **Consistent behavior**: All generators follow the same patterns
+- **Extensibility**: Users can build complex generators by composing simple ones
+
+```rust
+// Built-in HTTP generator uses the same API you have access to:
+Gen::from_dictionary(
+    common_statuses,           // ← from_elements under the hood
+    Gen::int_range(100, 599),  // ← existing generator
+    85, 15                     // ← explicit weights
+).unwrap()
+```
+
+#### 2. **Explicit Over Implicit**
+Following Hedgehog's core philosophy, dictionary support avoids "magic" in favor of explicit, understandable behavior:
+
+- **Explicit weights**: `Gen::from_dictionary(dict, random, 80, 20)` - clear probability distribution
+- **Explicit dictionaries**: No hidden/global dictionaries, you provide the values
+- **Explicit composition**: Combine generators explicitly rather than through annotations or reflection
+
+#### 3. **Realistic Data Distribution**
+Dictionary generators reflect real-world frequency patterns, not uniform distributions:
+
+```rust
+// HTTP status codes: heavily weight common codes, include rare ones
+Gen::from_dictionary(common_codes, all_valid_codes, 85, 15)
+
+// Network ports: different weights for well-known vs dynamic ranges  
+Gen::frequency([
+    (40, well_known_ports),  // 40% well-known ports
+    (35, registered_ports),  // 35% registered ports  
+    (25, dynamic_ports)      // 25% dynamic ports
+])
+```
+
+**Principle**: Start with how values actually appear in production, then add exploration.
+
+#### 4. **User Extensible by Design**
+The API is designed for users to create domain-specific generators, not just consume built-in ones:
+
+- **Pattern documentation**: Clear patterns for different use cases
+- **Domain examples**: Real examples across multiple domains (financial, gaming, medical, etc.)
+- **Composition guidance**: How to layer multiple dictionaries for complex scenarios
+
+#### 5. **Proper Shrinking Behavior**
+Dictionary generators maintain Hedgehog's excellent shrinking properties:
+
+- **Dictionary-first shrinking**: When a dictionary value fails, try other dictionary values first
+- **Structural shrinking**: Then fall back to underlying generator shrinking (e.g., string length)
+- **Shrink validity**: All shrink candidates remain valid within the problem domain
+
+#### 6. **Statistical Integration**
+Dictionary generators work seamlessly with Hedgehog's property classification system:
+
+```rust
+let prop = for_all(Gen::<u16>::http_status_code(), |&status| {
+    validate_http_response(status)
+}).classify("success", |&s| s >= 200 && s <= 299)  // ← Built on classification
+  .classify("client_error", |&s| s >= 400 && s <= 499);
+```
+
+This provides visibility into what your dictionary generators are actually producing.
+
+### Why These Principles Matter
+
+#### **For Users**
+- **Predictable**: Behavior follows clear, documented patterns
+- **Debuggable**: No hidden behavior, explicit weights and choices
+- **Extensible**: Can create domain-specific generators following the same patterns
+- **Composable**: Mix dictionary generators with any other Hedgehog features
+
+#### **For Testing Quality**  
+- **Realistic**: Tests exercise values that actually occur in production
+- **Comprehensive**: Still explores unknown territory through random generation
+- **Minimal counterexamples**: Proper shrinking finds the simplest failing case
+- **Measurable**: Statistical validation ensures generators work as intended
+
+#### **For Maintainability**
+- **No surprises**: Clear principles guide future development
+- **Consistent**: All dictionary features follow the same design patterns  
+- **Focused scope**: Core API stays minimal, domain generators build on top
+
+### Core Dictionary Methods
+
+#### `Gen::from_elements`
+
+Generate values exclusively from a predefined list:
+
+```rust
+use hedgehog::*;
+
+// Test with specific user roles
+let roles = vec!["admin", "user", "guest", "moderator"];
+let role_gen = Gen::from_elements(roles.iter().map(|s| s.to_string()).collect()).unwrap();
+
+let prop = for_all(role_gen, |role| {
+    // All generated roles will be from the predefined list
+    ["admin", "user", "guest", "moderator"].contains(&role.as_str())
+});
+```
+
+#### `Gen::from_dictionary`
+
+Mix dictionary values with random generation using weighted probabilities:
+
+```rust
+use hedgehog::*;
+
+// Mix common HTTP status codes (80%) with random valid codes (20%)
+let common_statuses = vec![200, 404, 500, 302, 401];
+let status_gen = Gen::from_dictionary(
+    common_statuses,
+    Gen::int_range(100, 599),  // Random valid HTTP codes
+    80, // 80% from dictionary
+    20  // 20% random
+).unwrap();
+
+let prop = for_all(status_gen, |&status| {
+    status >= 100 && status <= 599  // All should be valid HTTP codes
+});
+```
+
+### Domain-Specific Generators
+
+Hedgehog provides built-in generators for common domains:
+
+#### Web Domain Generation
+
+```rust
+use hedgehog::*;
+
+let domain_gen = Gen::<String>::web_domain();
+// Generates: "example.com", "test.org", "api.io", etc.
+
+let prop = for_all(domain_gen, |domain| {
+    domain.contains('.') && domain.len() > 4
+});
+```
+
+#### Email Address Generation
+
+```rust
+use hedgehog::*;
+
+let email_gen = Gen::<String>::email_address();
+// Generates: "user@gmail.com", "test@company.org", etc.
+
+let prop = for_all(email_gen, |email| {
+    email.contains('@') && email.contains('.')
+});
+```
+
+#### HTTP Status Code Generation
+
+```rust
+use hedgehog::*;
+
+let status_gen = Gen::<u16>::http_status_code();
+// Heavily weights common codes (200, 404, 500) while including others
+
+let prop = for_all(status_gen, |&status| {
+    status >= 100 && status <= 599
+}).classify("success", |&s| s >= 200 && s <= 299)
+  .classify("client_error", |&s| s >= 400 && s <= 499)
+  .classify("server_error", |&s| s >= 500 && s <= 599);
+```
+
+#### Network Port Generation
+
+```rust
+use hedgehog::*;
+
+let port_gen = Gen::<u16>::network_port();
+// Mixes well-known (22, 80, 443), registered, and dynamic ports
+
+let prop = for_all(port_gen, |&port| {
+    port > 0  // All ports should be valid
+}).classify("well_known", |&p| p <= 1023)
+  .classify("registered", |&p| p >= 1024 && p <= 49151)
+  .classify("dynamic", |&p| p >= 49152);
+```
+
+#### SQL Identifier Generation
+
+```rust
+use hedgehog::*;
+
+// Safe identifiers only
+let safe_gen = Gen::<String>::sql_identifier(false);
+
+// Mix SQL keywords (30%) with random identifiers (70%) 
+let risky_gen = Gen::<String>::sql_identifier(true);
+
+let prop = for_all(safe_gen, |identifier| {
+    !identifier.is_empty() && 
+    identifier.chars().all(|c| c.is_ascii_alphabetic())
+});
+```
+
+#### Programming Language Tokens
+
+```rust
+use hedgehog::*;
+
+let rust_keywords = ["fn", "let", "mut", "pub", "struct", "enum", "impl", "trait"];
+let token_gen = Gen::<String>::programming_tokens(&rust_keywords);
+// Generates 40% keywords, 60% random identifiers
+
+let prop = for_all(token_gen, |token| {
+    !token.is_empty() && 
+    token.chars().all(|c| c.is_ascii_alphabetic())
+});
+```
+
+### Real-World Use Cases
+
+#### API Testing
+
+```rust
+use hedgehog::*;
+
+// Test API endpoint validation
+let endpoints = vec!["/users", "/posts", "/comments", "/auth"];
+let endpoint_gen = Gen::from_dictionary(
+    endpoints.iter().map(|s| s.to_string()).collect(),
+    Gen::<String>::alpha_with_range(Range::linear(5, 20)).map(|s| format!("/{}", s)),
+    70, // 70% known endpoints
+    30  // 30% random endpoints
+).unwrap();
+
+let prop = for_all(endpoint_gen, |endpoint| {
+    endpoint.starts_with('/') && !endpoint.is_empty()
+});
+```
+
+#### Database Testing
+
+```rust
+use hedgehog::*;
+
+// Test query builder with realistic table/column names
+let table_gen = Gen::from_elements(vec![
+    "users".to_string(), "orders".to_string(), "products".to_string()
+]).unwrap();
+
+let column_gen = Gen::from_elements(vec![
+    "id".to_string(), "name".to_string(), "created_at".to_string()
+]).unwrap();
+
+fn build_query(table: &str, column: &str) -> String {
+    format!("SELECT {} FROM {}", column, table)
+}
+
+let prop = for_all(
+    Gen::<(String, String)>::tuple_of(table_gen, column_gen),
+    |(table, column)| {
+        let query = build_query(table, column);
+        query.contains("SELECT") && query.contains("FROM")
+    }
+);
+```
+
+#### Network Service Testing
+
+```rust
+use hedgehog::*;
+
+// Test service configuration with realistic ports
+let service_gen = Gen::from_elements(vec![
+    "web".to_string(), "api".to_string(), "database".to_string()
+]).unwrap();
+
+let port_gen = Gen::<u16>::network_port();
+
+let prop = for_all(
+    Gen::<(String, u16)>::tuple_of(service_gen, port_gen),
+    |(service, &port)| {
+        // Test that service configurations are reasonable
+        match service.as_str() {
+            "web" => port == 80 || port == 443 || port >= 8000,
+            "api" => port != 22, // API shouldn't use SSH port
+            "database" => port != 80 && port != 443, // DB shouldn't use web ports
+            _ => true
+        }
+    }
+).classify("web_service", |(service, _)| service == "web")
+  .classify("high_port", |(_, &port)| port >= 49152);
+```
+
+### Best Practices
+
+#### 1. Balance Dictionary vs Random
+
+Use roughly 70-80% dictionary values and 20-30% random generation:
+
+```rust
+// Good balance for comprehensive testing
+let gen = Gen::from_dictionary(
+    known_values,
+    random_gen,
+    75, // Known edge cases
+    25  // Exploration of unknown space
+).unwrap();
+```
+
+#### 2. Use Domain-Specific Dictionaries
+
+Create dictionaries that reflect your actual problem domain:
+
+```rust
+// For testing a shopping cart
+let product_categories = vec![
+    "electronics", "books", "clothing", "food", "toys"
+];
+
+// For testing user permissions
+let permission_levels = vec![
+    "read", "write", "admin", "super_admin"  
+];
+```
+
+#### 3. Combine with Classification
+
+Use dictionary generators with property classification to understand test coverage:
+
+```rust
+let prop = for_all(Gen::<String>::web_domain(), |domain| {
+    validate_domain(domain)
+}).classify("com_domain", |d| d.ends_with(".com"))
+  .classify("org_domain", |d| d.ends_with(".org"))
+  .classify("io_domain", |d| d.ends_with(".io"));
+```
+
+#### 4. Layer Multiple Dictionaries
+
+Combine different dictionary generators for complex scenarios:
+
+```rust
+let user_gen = Gen::from_elements(vec!["alice", "bob", "charlie"]).unwrap();
+let action_gen = Gen::from_elements(vec!["read", "write", "delete"]).unwrap();
+let resource_gen = Gen::from_elements(vec!["file", "database", "api"]).unwrap();
+
+let authorization_test = Gen::<(String, String, String)>::tuple_of(
+    user_gen, action_gen, resource_gen
+);
+```
+
+Dictionary support enables realistic testing by ensuring your properties are exercised with meaningful, domain-relevant data while still maintaining the exploratory power of random generation.
+
+### Creating Custom Domain Generators
+
+The dictionary API is designed for easy extension. You can create domain-specific generators for your application's needs:
+
+#### Financial Domain
+```rust
+use hedgehog::*;
+
+// Credit card types
+let card_types = vec!["Visa", "Mastercard", "Amex", "Discover"];
+let card_type_gen = Gen::from_elements(
+    card_types.iter().map(|s| s.to_string()).collect()
+).unwrap();
+
+// Currency codes (mix common + random)
+let common_currencies = vec!["USD", "EUR", "GBP", "JPY", "CAD"];
+let currency_gen = Gen::from_dictionary(
+    common_currencies.iter().map(|s| s.to_string()).collect(),
+    Gen::<String>::alpha().map(|s| s.chars().take(3).collect()), // 3-letter codes
+    85, 15
+).unwrap();
+```
+
+#### Gaming Domain
+```rust
+use hedgehog::*;
+
+// Game difficulty levels
+let difficulties = vec!["Easy", "Normal", "Hard", "Expert", "Nightmare"];
+let difficulty_gen = Gen::from_elements(
+    difficulties.iter().map(|s| s.to_string()).collect()
+).unwrap();
+
+// Player actions (mix common actions with rare ones)
+let common_actions = vec!["move", "jump", "attack", "defend", "use_item"];
+let action_gen = Gen::from_dictionary(
+    common_actions.iter().map(|s| s.to_string()).collect(),
+    Gen::<String>::alpha_with_range(Range::linear(4, 12)), // Random actions
+    75, 25
+).unwrap();
+```
+
+#### E-commerce Domain
+```rust
+use hedgehog::*;
+
+// Product categories
+let categories = vec![
+    "electronics", "books", "clothing", "home", "sports", 
+    "beauty", "automotive", "toys", "food", "health"
+];
+let category_gen = Gen::from_elements(
+    categories.iter().map(|s| s.to_string()).collect()
+).unwrap();
+
+// Shipping methods (realistic distribution)
+let shipping = vec![("standard", 60), ("express", 25), ("overnight", 10), ("pickup", 5)];
+let shipping_gen = Gen::frequency(
+    shipping.into_iter().map(|(method, weight)| 
+        WeightedChoice::new(weight, Gen::constant(method.to_string()))
+    ).collect()
+).unwrap();
+```
+
+#### Medical/Healthcare Domain
+```rust
+use hedgehog::*;
+
+// Medical specialties
+let specialties = vec![
+    "cardiology", "neurology", "pediatrics", "oncology", 
+    "dermatology", "psychiatry", "radiology", "surgery"
+];
+let specialty_gen = Gen::from_elements(
+    specialties.iter().map(|s| s.to_string()).collect()
+).unwrap();
+
+// ICD-10 style codes (realistic prefixes + random)
+let icd_prefixes = vec![
+    "A01", "B02", "C03", "D04", "E05", "F06", "G07", "H08", "I09", "J10"
+];
+let diagnosis_gen = Gen::from_dictionary(
+    icd_prefixes.iter().map(|s| s.to_string()).collect(),
+    Gen::int_range(100, 999).map(|code| format!("Z{:02}", code)), // Random codes
+    70, 30
+).unwrap();
+```
+
+#### IoT/Device Domain  
+```rust
+use hedgehog::*;
+
+// Device types
+let device_types = vec!["sensor", "actuator", "gateway", "controller", "display"];
+let device_gen = Gen::from_elements(
+    device_types.iter().map(|s| s.to_string()).collect()
+).unwrap();
+
+// Status codes (mix normal operation with error states)
+let normal_statuses = vec!["online", "idle", "active"];
+let error_statuses = vec!["offline", "error", "maintenance", "low_battery"];
+
+let status_gen = Gen::frequency(vec![
+    WeightedChoice::new(70, Gen::from_elements(
+        normal_statuses.iter().map(|s| s.to_string()).collect()
+    ).unwrap()),
+    WeightedChoice::new(30, Gen::from_elements(
+        error_statuses.iter().map(|s| s.to_string()).collect()
+    ).unwrap()),
+]).unwrap();
+```
+
+#### Configuration/Settings Domain
+```rust
+use hedgehog::*;
+
+// Log levels (realistic distribution)
+let log_levels = vec![
+    ("ERROR", 5), ("WARN", 15), ("INFO", 60), ("DEBUG", 15), ("TRACE", 5)
+];
+let log_level_gen = Gen::frequency(
+    log_levels.into_iter().map(|(level, weight)|
+        WeightedChoice::new(weight, Gen::constant(level.to_string()))
+    ).collect()
+).unwrap();
+
+// Feature flags (mostly enabled, some disabled)  
+let feature_flags = vec!["new_ui", "beta_api", "advanced_search", "mobile_app"];
+let flag_gen = Gen::from_elements(feature_flags.iter().map(|s| s.to_string()).collect()).unwrap();
+let flag_state_gen = Gen::frequency(vec![
+    WeightedChoice::new(80, Gen::constant(true)),  // 80% enabled
+    WeightedChoice::new(20, Gen::constant(false)), // 20% disabled  
+]).unwrap();
+```
+
+### Extension Patterns
+
+#### Pattern 1: Pure Dictionary Selection
+Use when you have a closed set of valid values:
+```rust
+let valid_values = vec!["option1", "option2", "option3"];
+let gen = Gen::from_elements(valid_values.iter().map(|s| s.to_string()).collect()).unwrap();
+```
+
+#### Pattern 2: Weighted Reality
+Use when some values are much more common than others:
+```rust
+let common_values = vec!["common1", "common2"];
+let gen = Gen::from_dictionary(
+    common_values.iter().map(|s| s.to_string()).collect(),
+    random_generator, // Your random generator
+    80, 20 // 80% common, 20% random
+).unwrap();
+```
+
+#### Pattern 3: Frequency-Based Distribution  
+Use when you know exact probability distributions:
+```rust
+let weighted_choices = vec![
+    ("frequent", 60), ("common", 25), ("rare", 10), ("very_rare", 5)
+];
+let gen = Gen::frequency(
+    weighted_choices.into_iter().map(|(value, weight)|
+        WeightedChoice::new(weight, Gen::constant(value.to_string()))
+    ).collect()
+).unwrap();
+```
+
+#### Pattern 4: Hierarchical Composition
+Use for complex domains with multiple related concepts:
+```rust
+let user_gen = Gen::from_elements(vec!["alice", "bob", "charlie"]).unwrap();
+let permission_gen = Gen::from_elements(vec!["read", "write", "admin"]).unwrap();
+let resource_gen = Gen::from_elements(vec!["file", "database", "api"]).unwrap();
+
+let authorization_test = Gen::<(String, String, String)>::tuple_of(
+    user_gen, permission_gen, resource_gen
+);
+```
+
+The key principle: **Start with your domain's real data distribution**. What values appear most often in production? What are the edge cases that cause bugs? Build your dictionaries to reflect this reality while still exploring unknown territory through random generation.
+
 ## Derive Macros
 
 Hedgehog provides derive macros for automatic generator creation. Enable with the `derive` feature:
