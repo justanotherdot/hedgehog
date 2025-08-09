@@ -59,3 +59,7 @@ path = "../examples/classification.rs"
 [[example]]
 name = "parallel-testing"
 path = "../examples/parallel-testing.rs"
+
+[[example]]
+name = "targeted-testing"
+path = "../examples/targeted-testing.rs"

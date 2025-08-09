@@ -9,6 +9,7 @@ pub mod gen;
 pub mod parallel;
 pub mod property;
 pub mod state;
+pub mod targeted;
 pub mod tree;
 
 // Re-export the main types
@@ -18,4 +19,5 @@ pub use gen::*;
 pub use parallel::*;
 pub use property::*;
 pub use state::*;
+pub use targeted::*;
 pub use tree::*;

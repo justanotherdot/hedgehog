@@ -2,4 +2,4 @@
 
 # Run tests for the hedgehog workspace
 
-cargo test --workspace
+cargo test --workspace --color never

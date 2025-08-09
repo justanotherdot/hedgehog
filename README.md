@@ -15,6 +15,7 @@ Property-based testing library for Rust, inspired by the original [Hedgehog](htt
 - **Example integration** - Mix explicit test examples with generated values
 - **Dictionary support** - Inject domain-specific realistic values (HTTP codes, SQL keywords, web domains)
 - **Parallel testing** - Speed up tests and detect race conditions with multi-threaded execution
+- **Targeted testing** - Search-guided generation to find inputs that maximize/minimize specific objectives
 - **Derive macros** - Automatic generator creation for custom types
 
 ## Quick Start
@@ -167,6 +168,75 @@ fn prop_user_validation() {
         }
         result => println!("Unexpected result: {:?}", result),
     }
+}
+```
+
+### Targeted Property Testing
+
+Find inputs that maximize or minimize specific objectives using search-guided generation:
+
+```rust
+use hedgehog::*;
+
+#[test]
+fn prop_find_slow_inputs() {
+    // Function that gets slower with larger inputs
+    fn computation_time(n: i32) -> std::time::Duration {
+        let start = std::time::Instant::now();
+        expensive_function(n);
+        start.elapsed()
+    }
+    
+    let generator = Gen::<i32>::from_range(Range::new(0, 1000));
+    
+    // Utility function - what we want to maximize
+    let utility_function = |input: &i32, _result: &TargetedResult| -> f64 {
+        computation_time(*input).as_micros() as f64
+    };
+    
+    // Test function - the property being tested
+    let test_function = |input: &i32| -> TargetedResult {
+        let result = expensive_function(*input);
+        if result > threshold {
+            TargetedResult::Fail {
+                counterexample: format!("input {} took too long", input),
+                tests_run: 1,
+                utility: 0.0, // Will be filled by utility function
+                // ... other fields
+            }
+        } else {
+            TargetedResult::Pass {
+                tests_run: 1,
+                utility: 0.0, // Will be filled by utility function  
+                // ... other fields
+            }
+        }
+    };
+    
+    // Neighborhood function - how to generate similar inputs
+    let neighborhood = IntegerNeighborhood::new(10);
+    
+    // Configure the search
+    let config = TargetedConfig {
+        objective: SearchObjective::Maximize, // Find inputs that maximize utility
+        search_steps: 1000,
+        initial_temperature: 100.0,
+        cooling_rate: 0.95,
+        ..Default::default()
+    };
+    
+    let search = for_all_targeted_with_config(
+        generator,
+        utility_function,
+        test_function,
+        neighborhood,
+        config,
+    );
+    
+    let (result, stats) = search.search(&Config::default());
+    
+    println!("Found {} evaluations, best utility: {}", 
+             stats.evaluations, stats.best_utility);
 }
 ```
 
@@ -343,6 +413,9 @@ cargo run --example dictionary-support
 # Function generator examples
 cargo run --example function-generators
 
+# Targeted property testing examples  
+cargo run --example targeted-testing
+
 # Basic usage examples
 cargo run --example basic
 
@@ -371,10 +444,14 @@ This is a work-in-progress implementation. See [docs/roadmap.md](docs/roadmap.md
 - **Frequency-Based Generation** - Weighted choice and one-of generators for realistic data patterns
 - **Property Classification** - Inspect test data distribution and gather statistics to validate generators
 - **Enhanced String Generation** - Controlled length ranges and distribution-based character generation
+- **Parallel Testing** - Multi-threaded property execution, concurrent testing for race conditions, deadlock detection
+- **Targeted Property Testing** - Search-guided generation using simulated annealing to find inputs that maximize/minimize objectives
 
 ## Documentation
 
 - [Property Classification Guide](docs/property-classification.md) - Inspecting test data distribution and statistics
+- [Targeted Testing Comparison](docs/targeted-testing-comparison.md) - Comparison with PROPER implementation and features
+- [Targeted Testing Future Improvements](docs/targeted-testing-future-improvements.md) - Roadmap for extending targeted testing capabilities
 - [Implementation Plan](docs/implementation-plan.md) - Detailed implementation roadmap
 - [Roadmap](docs/roadmap.md) - Project status and future plans
 - [Ideas](docs/ideas.md) - Comprehensive feature survey from other property testing libraries
