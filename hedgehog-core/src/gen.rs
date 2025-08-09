@@ -2,6 +2,23 @@
 
 use crate::{data::*, tree::*};
 
+// Helper function to safely subtract two values, returning None if overflow would occur
+fn try_safe_subtract<T>(a: T, b: T) -> Option<T>
+where
+    T: Copy + PartialOrd + std::ops::Sub<Output = T>,
+{
+    // For small values, subtraction should be safe
+    // This is a heuristic - for i32::MIN - 0, we know it will overflow
+    // For normal values like 8 - 0, it's safe
+    
+    // The exact overflow detection depends on the type, but for our purposes,
+    // we can use a simple heuristic: if both values are "reasonable" sized,
+    // the subtraction should be safe.
+    
+    // A very basic approach: try the subtraction and catch panics
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a - b)).ok()
+}
+
 fn towards<T>(destination: T, x: T) -> Vec<T>
 where
     T: Copy + PartialEq + PartialOrd + std::ops::Sub<Output = T> + std::ops::Add<Output = T> + std::ops::Div<Output = T> + From<u8>,
@@ -11,14 +28,49 @@ where
     }
 
     let mut result = vec![destination];
-    let diff = if x > destination { x - destination } else { destination - x };
+    
+    // Try to calculate the actual difference, but fall back to a safe value if overflow would occur
+    let diff = if x > destination {
+        // Check if we can safely subtract
+        if let Some(safe_diff) = try_safe_subtract(x, destination) {
+            safe_diff
+        } else {
+            T::from(64) // Safe fallback for extreme values
+        }
+    } else {
+        if let Some(safe_diff) = try_safe_subtract(destination, x) {
+            safe_diff
+        } else {
+            T::from(64) // Safe fallback
+        }
+    };
     
     let mut current = diff;
     let zero = T::from(0);
     let two = T::from(2);
     
     while current != zero {
-        let shrink = if x > destination { x - current } else { x + current };
+        // Avoid overflow in shrink calculations
+        let shrink = if x > destination {
+            // Moving towards destination by subtracting current
+            // But avoid overflow when x is very negative
+            if current > x {
+                destination  // Just go to destination if current is too large
+            } else {
+                x - current
+            }
+        } else {
+            // Moving towards destination by adding current
+            // But avoid overflow when x + current would exceed max
+            // For signed integers, this can overflow too
+            let maybe_shrink = x + current;
+            if maybe_shrink < x {  // Overflow occurred (for signed types)
+                destination
+            } else {
+                maybe_shrink
+            }
+        };
+        
         if shrink != x && shrink != destination {
             result.push(shrink);
         }
@@ -212,11 +264,22 @@ where
         F: Fn(&T) -> bool + 'static,
         T: Clone,
     {
-        Gen::new(move |size, seed| {
-            let tree = self.generate(size, seed);
-            let value = tree.value.clone();
-            tree.filter(&predicate)
-                .unwrap_or_else(|| Tree::singleton(value))
+        Gen::new(move |size, mut seed| {
+            const MAX_DISCARDS: usize = 100;
+            
+            for _ in 0..MAX_DISCARDS {
+                let tree = self.generate(size, seed);
+                if let Some(filtered_tree) = tree.filter(&predicate) {
+                    return filtered_tree;
+                }
+                // Try with a different seed
+                seed = seed.split().1;
+            }
+            
+            // If we couldn't generate a valid value after MAX_DISCARDS attempts,
+            // this is likely a too-restrictive filter or a generator issue.
+            // For now, panic to make the issue visible rather than silently returning invalid data.
+            panic!("Filter: exceeded maximum discards ({}) - predicate may be too restrictive", MAX_DISCARDS);
         })
     }
 
@@ -384,16 +447,17 @@ impl Gen<bool> {
     }
 }
 
-/// Macro to implement enhanced numeric generators with origin-based shrinking.
-macro_rules! impl_numeric_gen {
+/// Macro to implement enhanced numeric generators with origin-based shrinking for types that support From<u8>.
+macro_rules! impl_numeric_gen_with_towards {
     ($type:ty, $method:ident, $max_val:expr) => {
         impl Gen<$type> {
             /// Generate a number in the given range with enhanced shrinking.
             pub fn $method(min: $type, max: $type) -> Self {
                 Gen::new(move |_size, seed| {
-                    let range = (max - min + 1) as u64;
+                    // Prevent overflow by using checked arithmetic and wider types
+                    let range = (max as i64).saturating_sub(min as i64).saturating_add(1) as u64;
                     let (value, _new_seed) = seed.next_bounded(range);
-                    let result = min + value as $type;
+                    let result = min.saturating_add(value as $type);
 
                     let origin = if min <= 0 && max >= 0 {
                         0
@@ -403,8 +467,10 @@ macro_rules! impl_numeric_gen {
                         max
                     };
 
-                    let shrink_values = towards(origin, result);
                     let mut shrinks = Vec::new();
+                    
+                    // Use original shrinking for types that support From<u8>
+                    let shrink_values = towards(origin, result);
                     for &shrink_value in &shrink_values {
                         if shrink_value >= min && shrink_value <= max {
                             shrinks.push(Tree::singleton(shrink_value));
@@ -428,9 +494,64 @@ macro_rules! impl_numeric_gen {
     };
 }
 
+/// Macro to implement enhanced numeric generators with simple shrinking for types that don't support From<u8>.
+macro_rules! impl_numeric_gen_simple_shrink {
+    ($type:ty, $method:ident, $max_val:expr) => {
+        impl Gen<$type> {
+            /// Generate a number in the given range with simple shrinking.
+            pub fn $method(min: $type, max: $type) -> Self {
+                Gen::new(move |_size, seed| {
+                    // Prevent overflow by using checked arithmetic and wider types
+                    let range = (max as i64).saturating_sub(min as i64).saturating_add(1) as u64;
+                    let (value, _new_seed) = seed.next_bounded(range);
+                    let result = min.saturating_add(value as $type);
+
+                    let origin = if min <= 0 && max >= 0 {
+                        0
+                    } else if min > 0 {
+                        min
+                    } else {
+                        max
+                    };
+
+                    let mut shrinks = Vec::new();
+                    
+                    // Generate shrink values without requiring From<u8>
+                    let mut current = result;
+                    while current != origin && shrinks.len() < 10 {
+                        if current > origin {
+                            current = current.saturating_sub(1).max(origin);
+                        } else {
+                            current = current.saturating_add(1).min(origin);
+                        }
+                        if current != result && current >= min && current <= max {
+                            shrinks.push(Tree::singleton(current));
+                        }
+                    }
+
+                    Tree::with_children(result, shrinks)
+                })
+            }
+
+            /// Generate a positive number.
+            pub fn positive() -> Self {
+                Self::$method(1, $max_val)
+            }
+
+            /// Generate a natural number (including zero).
+            pub fn natural() -> Self {
+                Self::$method(0, $max_val)
+            }
+        }
+    };
+}
+
 // Implement for signed integers
-impl_numeric_gen!(i32, int_range, i32::MAX);
-impl_numeric_gen!(i64, i64_range, i64::MAX);
+impl_numeric_gen_simple_shrink!(i8, i8_range, i8::MAX);
+impl_numeric_gen_simple_shrink!(i16, i16_range, i16::MAX);
+impl_numeric_gen_with_towards!(i32, int_range, i32::MAX);
+impl_numeric_gen_with_towards!(i64, i64_range, i64::MAX);
+impl_numeric_gen_simple_shrink!(isize, isize_range, isize::MAX);
 
 // Implement for unsigned integers using specialized macro
 macro_rules! impl_unsigned_gen {
@@ -439,9 +560,10 @@ macro_rules! impl_unsigned_gen {
             /// Generate an unsigned number in the given range.
             pub fn $method(min: $type, max: $type) -> Self {
                 Gen::new(move |_size, seed| {
-                    let range = (max - min + 1) as u64;
+                    // Prevent overflow by using checked arithmetic
+                    let range = (max as u64).saturating_sub(min as u64).saturating_add(1);
                     let (value, _new_seed) = seed.next_bounded(range);
-                    let result = min + value as $type;
+                    let result = min.saturating_add(value as $type);
 
                     let origin = min;
                     
@@ -470,16 +592,21 @@ macro_rules! impl_unsigned_gen {
     };
 }
 
+impl_unsigned_gen!(u8, u8_range, u8::MAX);
+impl_unsigned_gen!(u16, u16_range, u16::MAX);
 impl_unsigned_gen!(u32, u32_range, u32::MAX);
+impl_unsigned_gen!(u64, u64_range, u64::MAX);
+impl_unsigned_gen!(usize, usize_range, usize::MAX);
 
 // Enhanced range-based generators with distribution support
 impl Gen<i32> {
     /// Generate integers using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<i32>) -> Self {
         Gen::new(move |_size, seed| {
-            let range_size = (range.max - range.min + 1) as u64;
+            // Prevent overflow by using checked arithmetic
+            let range_size = (range.max as i64).saturating_sub(range.min as i64).saturating_add(1) as u64;
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
-            let result = range.min + offset as i32;
+            let result = range.min.saturating_add(offset as i32);
 
             // Enhanced shrinking: towards origin, binary search, and traditional halving
             let mut shrinks = Vec::new();
@@ -524,9 +651,14 @@ impl Gen<i64> {
     /// Generate i64 values using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<i64>) -> Self {
         Gen::new(move |_size, seed| {
-            let range_size = (range.max - range.min + 1) as u64;
+            // Prevent overflow by using checked arithmetic and saturating operations
+            let range_size = if range.max == i64::MAX && range.min == i64::MIN {
+                u64::MAX
+            } else {
+                (range.max as i128).saturating_sub(range.min as i128).saturating_add(1) as u64
+            };
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
-            let result = range.min + offset as i64;
+            let result = range.min.saturating_add(offset as i64);
 
             // Enhanced shrinking similar to i32
             let mut shrinks = Vec::new();
@@ -553,9 +685,10 @@ impl Gen<u32> {
     /// Generate u32 values using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<u32>) -> Self {
         Gen::new(move |_size, seed| {
-            let range_size = (range.max - range.min + 1) as u64;
+            // Prevent overflow by using checked arithmetic
+            let range_size = (range.max as u64).saturating_sub(range.min as u64).saturating_add(1);
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
-            let result = range.min + offset as u32;
+            let result = range.min.saturating_add(offset as u32);
 
             // Enhanced shrinking for unsigned: towards minimum
             let mut shrinks = Vec::new();
@@ -618,6 +751,181 @@ impl Gen<f64> {
     }
 }
 
+// Additional from_range implementations for missing integer types
+impl Gen<i8> {
+    /// Generate i8 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<i8>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = (range.max as i16).saturating_sub(range.min as i16).saturating_add(1) as u64;
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min.saturating_add(offset as i8);
+
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or_else(|| {
+                if range.min <= 0 && range.max >= 0 { 0 } else if range.min > 0 { range.min } else { range.max }
+            });
+            
+            // Generate shrink values for i8 without requiring From<u8>
+            let mut current = result;
+            while current != origin && shrinks.len() < 10 {
+                if current > origin {
+                    current = current.saturating_sub(1).max(origin);
+                } else {
+                    current = current.saturating_add(1).min(origin);
+                }
+                if current != result && current >= range.min && current <= range.max {
+                    shrinks.push(Tree::singleton(current));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
+impl Gen<i16> {
+    /// Generate i16 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<i16>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = (range.max as i32).saturating_sub(range.min as i32).saturating_add(1) as u64;
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min.saturating_add(offset as i16);
+
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or_else(|| {
+                if range.min <= 0 && range.max >= 0 { 0 } else if range.min > 0 { range.min } else { range.max }
+            });
+            
+            // Generate shrink values for i16 without requiring From<u8>
+            let mut current = result;
+            while current != origin && shrinks.len() < 10 {
+                if current > origin {
+                    current = current.saturating_sub(1).max(origin);
+                } else {
+                    current = current.saturating_add(1).min(origin);
+                }
+                if current != result && current >= range.min && current <= range.max {
+                    shrinks.push(Tree::singleton(current));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
+impl Gen<isize> {
+    /// Generate isize values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<isize>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = if range.max == isize::MAX && range.min == isize::MIN {
+                u64::MAX
+            } else {
+                (range.max as i128).saturating_sub(range.min as i128).saturating_add(1) as u64
+            };
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min.saturating_add(offset as isize);
+
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or_else(|| {
+                if range.min <= 0 && range.max >= 0 { 0 } else if range.min > 0 { range.min } else { range.max }
+            });
+            
+            // Generate shrink values for isize without requiring From<u8>
+            let mut current = result;
+            while current != origin && shrinks.len() < 10 {
+                if current > origin {
+                    current = current.saturating_sub(1).max(origin);
+                } else {
+                    current = current.saturating_add(1).min(origin);
+                }
+                if current != result && current >= range.min && current <= range.max {
+                    shrinks.push(Tree::singleton(current));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
+impl Gen<u8> {
+    /// Generate u8 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<u8>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = (range.max as u16).saturating_sub(range.min as u16).saturating_add(1) as u64;
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min.saturating_add(offset as u8);
+
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or(range.min);
+            
+            let shrink_values = towards(origin, result);
+            for &shrink_value in &shrink_values {
+                if shrink_value >= range.min && shrink_value <= range.max {
+                    shrinks.push(Tree::singleton(shrink_value));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
+impl Gen<u64> {
+    /// Generate u64 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<u64>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = if range.max == u64::MAX && range.min == 0 {
+                u64::MAX
+            } else {
+                range.max.saturating_sub(range.min).saturating_add(1)
+            };
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min.saturating_add(offset);
+
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or(range.min);
+            
+            let shrink_values = towards(origin, result);
+            for &shrink_value in &shrink_values {
+                if shrink_value >= range.min && shrink_value <= range.max {
+                    shrinks.push(Tree::singleton(shrink_value));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
+impl Gen<usize> {
+    /// Generate usize values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<usize>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = if range.max == usize::MAX && range.min == 0 {
+                u64::MAX
+            } else {
+                range.max.saturating_sub(range.min).saturating_add(1) as u64
+            };
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min.saturating_add(offset as usize);
+
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or(range.min);
+            
+            let shrink_values = towards(origin, result);
+            for &shrink_value in &shrink_values {
+                if shrink_value >= range.min && shrink_value <= range.max {
+                    shrinks.push(Tree::singleton(shrink_value));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
+    }
+}
+
 impl Gen<u16> {
     /// Generate realistic HTTP status codes with weighted distribution.
     ///
@@ -668,6 +976,27 @@ impl Gen<u16> {
             WeightedChoice::new(35, Gen::int_range(1024, 49151).map(|i| i as u16)),
             WeightedChoice::new(25, Gen::int_range(49152, 65535).map(|i| i as u16)),
         ]).unwrap()
+    }
+
+    /// Generate u16 values using a Range specification with distribution control.
+    pub fn from_range(range: crate::data::Range<u16>) -> Self {
+        Gen::new(move |_size, seed| {
+            let range_size = (range.max as u32).saturating_sub(range.min as u32).saturating_add(1) as u64;
+            let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
+            let result = range.min.saturating_add(offset as u16);
+
+            let mut shrinks = Vec::new();
+            let origin = range.origin.unwrap_or(range.min);
+            
+            let shrink_values = towards(origin, result);
+            for &shrink_value in &shrink_values {
+                if shrink_value >= range.min && shrink_value <= range.max {
+                    shrinks.push(Tree::singleton(shrink_value));
+                }
+            }
+
+            Tree::with_children(result, shrinks)
+        })
     }
 }
 
@@ -1172,6 +1501,169 @@ where
             // Shrink second component, keep first
             for second_shrink in second_tree.shrinks() {
                 let shrunk_tuple = (first_tree.value.clone(), second_shrink.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            Tree::with_children(tuple_value, shrinks)
+        })
+    }
+}
+
+// 3-element tuple implementation
+impl<T, U, V> Gen<(T, U, V)>
+where
+    T: 'static + Clone,
+    U: 'static + Clone,
+    V: 'static + Clone,
+{
+    /// Generate 3-element tuples using the given generators.
+    pub fn tuple_of(first_gen: Gen<T>, second_gen: Gen<U>, third_gen: Gen<V>) -> Self {
+        Gen::new(move |size, seed| {
+            let (first_seed, rest_seed) = seed.split();
+            let (second_seed, third_seed) = rest_seed.split();
+
+            let first_tree = first_gen.generate(size, first_seed);
+            let second_tree = second_gen.generate(size, second_seed);
+            let third_tree = third_gen.generate(size, third_seed);
+
+            let tuple_value = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone());
+
+            let mut shrinks = Vec::new();
+
+            // Shrink first component, keep others
+            for first_shrink in first_tree.shrinks() {
+                let shrunk_tuple = (first_shrink.clone(), second_tree.value.clone(), third_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            // Shrink second component, keep others
+            for second_shrink in second_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_shrink.clone(), third_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            // Shrink third component, keep others
+            for third_shrink in third_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_shrink.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            Tree::with_children(tuple_value, shrinks)
+        })
+    }
+}
+
+// 4-element tuple implementation
+impl<T, U, V, W> Gen<(T, U, V, W)>
+where
+    T: 'static + Clone,
+    U: 'static + Clone,
+    V: 'static + Clone,
+    W: 'static + Clone,
+{
+    /// Generate 4-element tuples using the given generators.
+    pub fn tuple_of(first_gen: Gen<T>, second_gen: Gen<U>, third_gen: Gen<V>, fourth_gen: Gen<W>) -> Self {
+        Gen::new(move |size, seed| {
+            let (first_seed, rest_seed) = seed.split();
+            let (second_seed, rest_seed) = rest_seed.split();
+            let (third_seed, fourth_seed) = rest_seed.split();
+
+            let first_tree = first_gen.generate(size, first_seed);
+            let second_tree = second_gen.generate(size, second_seed);
+            let third_tree = third_gen.generate(size, third_seed);
+            let fourth_tree = fourth_gen.generate(size, fourth_seed);
+
+            let tuple_value = (
+                first_tree.value.clone(),
+                second_tree.value.clone(),
+                third_tree.value.clone(),
+                fourth_tree.value.clone(),
+            );
+
+            let mut shrinks = Vec::new();
+
+            // Shrink each component while keeping others fixed
+            for first_shrink in first_tree.shrinks() {
+                let shrunk_tuple = (first_shrink.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            for second_shrink in second_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_shrink.clone(), third_tree.value.clone(), fourth_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            for third_shrink in third_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_shrink.clone(), fourth_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            for fourth_shrink in fourth_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_shrink.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            Tree::with_children(tuple_value, shrinks)
+        })
+    }
+}
+
+// 5-element tuple implementation
+impl<T, U, V, W, X> Gen<(T, U, V, W, X)>
+where
+    T: 'static + Clone,
+    U: 'static + Clone,
+    V: 'static + Clone,
+    W: 'static + Clone,
+    X: 'static + Clone,
+{
+    /// Generate 5-element tuples using the given generators.
+    pub fn tuple_of(first_gen: Gen<T>, second_gen: Gen<U>, third_gen: Gen<V>, fourth_gen: Gen<W>, fifth_gen: Gen<X>) -> Self {
+        Gen::new(move |size, seed| {
+            let (first_seed, rest_seed) = seed.split();
+            let (second_seed, rest_seed) = rest_seed.split();
+            let (third_seed, rest_seed) = rest_seed.split();
+            let (fourth_seed, fifth_seed) = rest_seed.split();
+
+            let first_tree = first_gen.generate(size, first_seed);
+            let second_tree = second_gen.generate(size, second_seed);
+            let third_tree = third_gen.generate(size, third_seed);
+            let fourth_tree = fourth_gen.generate(size, fourth_seed);
+            let fifth_tree = fifth_gen.generate(size, fifth_seed);
+
+            let tuple_value = (
+                first_tree.value.clone(),
+                second_tree.value.clone(),
+                third_tree.value.clone(),
+                fourth_tree.value.clone(),
+                fifth_tree.value.clone(),
+            );
+
+            let mut shrinks = Vec::new();
+
+            // Shrink each component while keeping others fixed
+            for first_shrink in first_tree.shrinks() {
+                let shrunk_tuple = (first_shrink.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_tree.value.clone(), fifth_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            for second_shrink in second_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_shrink.clone(), third_tree.value.clone(), fourth_tree.value.clone(), fifth_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            for third_shrink in third_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_shrink.clone(), fourth_tree.value.clone(), fifth_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            for fourth_shrink in fourth_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_shrink.clone(), fifth_tree.value.clone());
+                shrinks.push(Tree::singleton(shrunk_tuple));
+            }
+
+            for fifth_shrink in fifth_tree.shrinks() {
+                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_tree.value.clone(), fifth_shrink.clone());
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 

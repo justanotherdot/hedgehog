@@ -1,6 +1,6 @@
 # Ideas for Future Hedgehog Features
 
-This document captures ideas for extending Hedgehog's capabilities, inspired by other property testing and fuzzing tools.
+This document captures ideas for extending Hedgehog's capabilities, both from other property testing and fuzzing tools, and from exploring the longer-term possibilities of the field.
 
 ## High Impact Features
 
@@ -95,7 +95,7 @@ let prop = for_all(Gen::vec_int(), |vec| {
 **What**: Better ways to combine and compose generators
 ```rust
 // Current approach
-let gen = Gen::tuple_of(Gen::string(), Gen::int_range(0, 100));
+let gen = Gen::<(String, i32)>::tuple_of(Gen::string(), Gen::int_range(0, 100));
 
 // Enhanced compositional approach
 let user_gen = prop_compose! {
@@ -307,3 +307,43 @@ Each feature should be evaluated based on:
 - **Implementation complexity** - How much work is involved?
 - **Maintenance burden** - How much ongoing work?
 - **Ecosystem fit** - How well does it work with existing Rust testing tools?
+
+## Beyond the Horizon
+
+These are longer-term possibilities that could emerge as property testing evolves:
+
+### Advanced Property Testing Research
+- **Symbolic execution integration** - combining property testing with symbolic analysis
+- **Machine learning-guided generation** - using ML to learn better input distributions
+- **Differential testing frameworks** - systematic comparison between implementations
+- **Compositional property testing** - properties that compose across module boundaries
+
+### Developer Experience Evolution
+- **IDE integrations** - VS Code/IntelliJ plugins with live property testing
+- **Property debugging tools** - step through property failures with rich visualizations
+- **Interactive property exploration** - GUI tools for exploring generator distributions
+- **Property test synthesis** - automatically generate properties from code
+
+### Ecosystem Integration
+- **WebAssembly support** - run properties in browsers and edge computing
+- **Cross-language bindings** - use Hedgehog from Python, JavaScript, Go, etc.
+- **CI/CD pipeline integration** - first-class GitHub Actions, custom test runners
+- **Distributed property testing** - run massive property campaigns across clusters
+
+### Domain-Specific Extensions
+- **Network protocol testing** - systematic protocol fuzzing and validation  
+- **Database consistency testing** - ACID property verification
+- **Security property testing** - cryptographic protocol validation
+- **Game engine testing** - physics simulation property validation
+
+### Research Frontiers
+- **Causality-preserving shrinking** - maintain causal relationships during minimization
+- **Temporal property testing** - properties over time series and event streams
+- **Probabilistic property testing** - properties with statistical guarantees
+
+### Maturity Features
+- **Standard library integration** - potential inclusion in common testing workflows
+- **Academic partnerships** - collaborations with programming language research
+- **Industry adoption** - enterprise features and support tooling
+
+Most of these are speculative and would depend on community interest, research developments, and practical demand. The focus remains on building solid, useful tools that solve real testing problems.

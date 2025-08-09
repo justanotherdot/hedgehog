@@ -16,7 +16,7 @@ use hedgehog_core::*;
 
 // Test integer addition commutativity across 4 threads
 let prop = for_all_parallel(
-    Gen::tuple_of(Gen::int_range(1, 100), Gen::int_range(1, 100)),
+    Gen::<(i32, i32)>::tuple_of(Gen::int_range(1, 100), Gen::int_range(1, 100)),
     |(a, b)| a + b == b + a,
     4 // Number of threads
 );

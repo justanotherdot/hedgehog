@@ -46,7 +46,7 @@ impl<T> Tree<T> {
     /// Apply a function to the tree value and collect all results.
     pub fn bind<U, F>(self, f: F) -> Tree<U>
     where
-        F: Fn(T) -> Tree<U>,
+        F: Fn(T) -> Tree<U> + Clone,
     {
         let Tree {
             value: new_value,
@@ -56,7 +56,7 @@ impl<T> Tree<T> {
         let mapped_children: Vec<Tree<U>> = self
             .children
             .into_iter()
-            .map(|child| child.bind(&f))
+            .map(|child| child.bind(f.clone()))
             .collect();
 
         Tree {
