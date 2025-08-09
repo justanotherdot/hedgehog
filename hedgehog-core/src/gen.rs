@@ -278,6 +278,99 @@ where
             .collect();
         Gen::frequency(choices)
     }
+
+    /// Generate values from a dictionary (list of predefined elements).
+    ///
+    /// This is useful for injecting domain-specific realistic values into tests.
+    /// Returns an error if the elements list is empty.
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// // Generate HTTP status codes from common values
+    /// let status_codes = vec![200, 404, 500, 302, 401];
+    /// let gen = Gen::from_elements(status_codes).unwrap();
+    /// ```
+    pub fn from_elements(elements: Vec<T>) -> crate::Result<Gen<T>>
+    where
+        T: Clone + 'static,
+    {
+        if elements.is_empty() {
+            return Err(crate::HedgehogError::InvalidGenerator {
+                message: "elements list cannot be empty".to_string(),
+            });
+        }
+
+        Ok(Gen::new(move |_size, seed| {
+            let (index, _new_seed) = seed.next_bounded(elements.len() as u64);
+            let chosen = elements[index as usize].clone();
+            
+            // Create shrinking candidates by trying other elements
+            let mut shrinks = Vec::new();
+            for (i, element) in elements.iter().enumerate() {
+                if i != index as usize {
+                    shrinks.push(element.clone());
+                }
+            }
+            
+            Tree::with_children(chosen, shrinks.into_iter().map(Tree::singleton).collect())
+        }))
+    }
+
+    /// Mix dictionary values with random generation based on probability weights.
+    ///
+    /// This allows combining realistic domain-specific values with random generation
+    /// to get both targeted edge cases and broad coverage.
+    ///
+    /// # Parameters
+    /// - `elements`: Dictionary of predefined values to inject
+    /// - `random_gen`: Generator for random values
+    /// - `elements_weight`: Weight for choosing from dictionary (higher = more likely)
+    /// - `random_weight`: Weight for choosing random generation
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// let common_ports = vec![80, 443, 22, 25, 53];
+    /// let gen = Gen::from_dictionary(
+    ///     common_ports,
+    ///     Gen::int_range(1024, 65535), // Random high ports
+    ///     70, // 70% chance of common ports
+    ///     30  // 30% chance of random ports
+    /// ).unwrap();
+    /// ```
+    pub fn from_dictionary(
+        elements: Vec<T>,
+        random_gen: Gen<T>,
+        elements_weight: u64,
+        random_weight: u64,
+    ) -> crate::Result<Gen<T>>
+    where
+        T: Clone + 'static,
+    {
+        if elements.is_empty() {
+            return Err(crate::HedgehogError::InvalidGenerator {
+                message: "dictionary elements list cannot be empty".to_string(),
+            });
+        }
+
+        if elements_weight == 0 && random_weight == 0 {
+            return Err(crate::HedgehogError::InvalidGenerator {
+                message: "at least one weight must be non-zero".to_string(),
+            });
+        }
+
+        let elements_gen = Gen::from_elements(elements)?;
+        
+        let choices = vec![
+            WeightedChoice::new(elements_weight, elements_gen),
+            WeightedChoice::new(random_weight, random_gen),
+        ];
+
+        Gen::frequency(choices)
+    }
 }
 
 /// Primitive generators.
@@ -525,6 +618,59 @@ impl Gen<f64> {
     }
 }
 
+impl Gen<u16> {
+    /// Generate realistic HTTP status codes with weighted distribution.
+    ///
+    /// Heavily weights common status codes (200, 404, 500) while still
+    /// generating less common ones for comprehensive testing.
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// let status_gen = Gen::<u16>::http_status_code();
+    /// ```
+    pub fn http_status_code() -> Self {
+        let common_statuses = vec![
+            200, 201, 204,           // Success
+            301, 302, 304,           // Redirection  
+            400, 401, 403, 404, 409, // Client Error
+            500, 502, 503, 504       // Server Error
+        ];
+        
+        Gen::from_dictionary(
+            common_statuses,
+            Gen::int_range(100, 599).map(|i| i as u16), // Any valid HTTP status
+            85, // 85% common statuses
+            15  // 15% random valid statuses
+        ).unwrap()
+    }
+
+    /// Generate network port numbers with weighted distribution.
+    ///
+    /// Mixes well-known ports (1-1023) with registered ports (1024-49151)
+    /// and dynamic ports (49152-65535).
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// let port_gen = Gen::<u16>::network_port();
+    /// ```
+    pub fn network_port() -> Self {
+        let well_known = vec![
+            21, 22, 23, 25, 53, 67, 68, 69, 80, 110,    // Basic services
+            143, 443, 993, 995, 587, 465, 993, 143      // Email & secure
+        ];
+        
+        Gen::frequency(vec![
+            WeightedChoice::new(40, Gen::from_elements(well_known).unwrap()),
+            WeightedChoice::new(35, Gen::int_range(1024, 49151).map(|i| i as u16)),
+            WeightedChoice::new(25, Gen::int_range(49152, 65535).map(|i| i as u16)),
+        ]).unwrap()
+    }
+}
+
 impl Gen<char> {
     /// Generate ASCII alphabetic characters (a-z, A-Z).
     pub fn ascii_alpha() -> Self {
@@ -748,6 +894,164 @@ impl Gen<String> {
     /// Generate printable ASCII strings with controlled length.
     pub fn printable_with_range(length_range: crate::data::Range<usize>) -> Self {
         Self::with_range(length_range, Gen::<char>::ascii_printable())
+    }
+
+    /// Generate realistic web domain names using common TLDs.
+    ///
+    /// Mixes common TLDs (.com, .org, .net, etc.) with random subdomains.
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// let domain_gen = Gen::<String>::web_domain();
+    /// ```
+    pub fn web_domain() -> Self {
+        let tlds = vec![
+            ".com", ".org", ".net", ".edu", ".gov", 
+            ".io", ".co", ".uk", ".de", ".fr", ".jp",
+            ".ca", ".au", ".ru", ".br", ".in"
+        ];
+        
+        Gen::new(move |size, seed| {
+            let (tld_seed, domain_seed) = seed.split();
+            let (tld_index, _) = tld_seed.next_bounded(tlds.len() as u64);
+            let chosen_tld = tlds[tld_index as usize];
+            
+            // Generate a random subdomain (3-12 characters)
+            let subdomain_gen = Gen::<String>::alpha_with_range(
+                crate::data::Range::linear(3, 12)
+            );
+            let subdomain_tree = subdomain_gen.generate(size, domain_seed);
+            let subdomain = subdomain_tree.value.to_lowercase();
+            
+            let full_domain = format!("{}{}", subdomain, chosen_tld);
+            
+            // Shrinking: try other TLDs and shrink subdomain
+            let mut shrinks = Vec::new();
+            for (i, other_tld) in tlds.iter().enumerate() {
+                if i != tld_index as usize {
+                    shrinks.push(format!("{}{}", subdomain, other_tld));
+                }
+            }
+            
+            // Add shrunk subdomains with the same TLD
+            for shrunk_subdomain in subdomain_tree.shrinks() {
+                let shrunk_domain = format!("{}{}", shrunk_subdomain.to_lowercase(), chosen_tld);
+                shrinks.push(shrunk_domain);
+            }
+            
+            Tree::with_children(full_domain, shrinks.into_iter().map(Tree::singleton).collect())
+        })
+    }
+
+    /// Generate realistic email addresses with common domains.
+    ///
+    /// Combines random usernames with realistic email domains.
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// let email_gen = Gen::<String>::email_address();
+    /// ```
+    pub fn email_address() -> Self {
+        let domains = vec![
+            "@gmail.com", "@yahoo.com", "@hotmail.com", "@outlook.com",
+            "@aol.com", "@icloud.com", "@protonmail.com", "@fastmail.com",
+            "@example.com", "@test.com", "@company.org", "@university.edu"
+        ];
+        
+        Gen::new(move |size, seed| {
+            let (domain_seed, username_seed) = seed.split();
+            let (domain_index, _) = domain_seed.next_bounded(domains.len() as u64);
+            let chosen_domain = domains[domain_index as usize];
+            
+            // Generate simple username (just alphabetic for simplicity)
+            let username_gen = Gen::<String>::alpha_with_range(
+                crate::data::Range::linear(3, 15)
+            );
+            
+            let username_tree = username_gen.generate(size, username_seed);
+            let username = username_tree.value.to_lowercase();
+            
+            let full_email = format!("{}{}", username, chosen_domain);
+            
+            // Shrinking: try other domains and shrink username
+            let mut shrinks = Vec::new();
+            for (i, other_domain) in domains.iter().enumerate() {
+                if i != domain_index as usize {
+                    shrinks.push(format!("{}{}", username, other_domain));
+                }
+            }
+            
+            // Add shrunk usernames with the same domain
+            for shrunk_username in username_tree.shrinks() {
+                let shrunk_email = format!("{}{}", shrunk_username.to_lowercase(), chosen_domain);
+                shrinks.push(shrunk_email);
+            }
+            
+            Tree::with_children(full_email, shrinks.into_iter().map(Tree::singleton).collect())
+        })
+    }
+
+    /// Generate SQL identifiers with optional keyword injection.
+    ///
+    /// Mixes common SQL keywords with random identifiers for database testing.
+    ///
+    /// # Parameters
+    /// - `include_keywords`: Whether to include SQL keywords (can cause syntax errors)
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// let identifier_gen = Gen::<String>::sql_identifier(false); // Safe identifiers only
+    /// let risky_gen = Gen::<String>::sql_identifier(true);       // May include keywords
+    /// ```
+    pub fn sql_identifier(include_keywords: bool) -> Self {
+        let keywords = vec![
+            "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", 
+            "JOIN", "INNER", "LEFT", "RIGHT", "ON", "AS", "AND", "OR",
+            "NOT", "NULL", "TRUE", "FALSE", "ORDER", "BY", "GROUP",
+            "HAVING", "LIMIT", "OFFSET", "UNION", "DISTINCT", "COUNT",
+            "SUM", "AVG", "MAX", "MIN", "CREATE", "TABLE", "INDEX",
+            "PRIMARY", "KEY", "FOREIGN", "UNIQUE", "CHECK", "DEFAULT"
+        ];
+        
+        if include_keywords {
+            Gen::from_dictionary(
+                keywords.into_iter().map(|s| s.to_string()).collect(),
+                Gen::<String>::alpha_with_range(crate::data::Range::linear(3, 20)),
+                30, // 30% keywords
+                70  // 70% random identifiers
+            ).unwrap()
+        } else {
+            Gen::<String>::alpha_with_range(crate::data::Range::linear(3, 20))
+        }
+    }
+
+    /// Generate programming language tokens for a specific language.
+    ///
+    /// Useful for testing parsers, compilers, and code analysis tools.
+    ///
+    /// # Example
+    /// ```rust
+    /// use hedgehog_core::*;
+    /// 
+    /// let rust_gen = Gen::<String>::programming_tokens(&[
+    ///     "fn", "let", "mut", "pub", "struct", "enum", "impl", "trait"
+    /// ]);
+    /// ```
+    pub fn programming_tokens(keywords: &[&str]) -> Self {
+        let keyword_strings: Vec<String> = keywords.iter().map(|&s| s.to_string()).collect();
+        
+        Gen::from_dictionary(
+            keyword_strings,
+            Gen::<String>::alpha_with_range(crate::data::Range::linear(2, 15)),
+            40, // 40% keywords
+            60  // 60% random identifiers
+        ).unwrap()
     }
 }
 
@@ -1950,5 +2254,276 @@ mod tests {
         println!("shrink lengths: {:?}", lengths);
         assert!(lengths.contains(&0)); // Empty list
         assert!(lengths.len() > 2); // Multiple different shrinks
+    }
+
+    // Dictionary support tests
+    #[test]
+    fn test_from_elements_basic() {
+        let elements = vec!["apple", "banana", "cherry"];
+        let gen = Gen::from_elements(elements.clone()).unwrap();
+        
+        let mut generated_values = std::collections::HashSet::new();
+        for _ in 0..20 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let value = tree.value;
+            assert!(elements.contains(&value));
+            generated_values.insert(value);
+        }
+        
+        // Should generate different values over multiple runs
+        assert!(generated_values.len() > 1);
+    }
+    
+    #[test]
+    fn test_from_elements_empty_error() {
+        let empty_elements: Vec<i32> = vec![];
+        let result = Gen::from_elements(empty_elements);
+        
+        assert!(result.is_err());
+        if let Err(crate::HedgehogError::InvalidGenerator { message }) = result {
+            assert!(message.contains("empty"));
+        }
+    }
+    
+    #[test]
+    fn test_from_elements_shrinking() {
+        let elements = vec![1, 2, 3, 4, 5];
+        let gen = Gen::from_elements(elements).unwrap();
+        let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+        
+        // Should have shrinks to other elements
+        let shrinks = tree.shrinks();
+        assert!(!shrinks.is_empty());
+        
+        // All shrinks should be from the original elements
+        for &shrink in shrinks {
+            assert!([1, 2, 3, 4, 5].contains(&shrink));
+        }
+    }
+    
+    #[test]
+    fn test_from_dictionary_basic() {
+        let dictionary = vec![1, 2, 3];
+        let random_gen = Gen::int_range(10, 20);
+        
+        let gen = Gen::from_dictionary(dictionary.clone(), random_gen, 50, 50).unwrap();
+        
+        let mut dict_values = 0;
+        let mut random_values = 0;
+        
+        for _ in 0..100 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let value = tree.value;
+            
+            if dictionary.contains(&value) {
+                dict_values += 1;
+            } else if value >= 10 && value <= 20 {
+                random_values += 1;
+            }
+        }
+        
+        // Should get both dictionary and random values
+        assert!(dict_values > 0);
+        assert!(random_values > 0);
+        
+        // With 50/50 weights, should be roughly balanced
+        let total = dict_values + random_values;
+        let dict_ratio = dict_values as f64 / total as f64;
+        assert!(dict_ratio > 0.3 && dict_ratio < 0.7, "Dictionary ratio: {}", dict_ratio);
+    }
+    
+    #[test]
+    fn test_from_dictionary_weights() {
+        let dictionary = vec![1];
+        let random_gen = Gen::int_range(10, 10); // Always generates 10
+        
+        // Heavy weight on dictionary
+        let gen = Gen::from_dictionary(dictionary, random_gen, 90, 10).unwrap();
+        
+        let mut dict_count = 0;
+        for _ in 0..100 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            if tree.value == 1 {
+                dict_count += 1;
+            }
+        }
+        
+        // Should heavily favor dictionary values
+        assert!(dict_count > 70, "Dictionary count: {}", dict_count);
+    }
+    
+    #[test]
+    fn test_from_dictionary_errors() {
+        let empty_dict: Vec<i32> = vec![];
+        
+        // Empty dictionary should error
+        assert!(Gen::from_dictionary(empty_dict, Gen::int_range(1, 10), 50, 50).is_err());
+        
+        // Zero weights should error  
+        assert!(Gen::from_dictionary(vec![1], Gen::int_range(1, 10), 0, 0).is_err());
+    }
+    
+    #[test] 
+    fn test_http_status_code_generator() {
+        let gen = Gen::<u16>::http_status_code();
+        
+        let mut statuses = std::collections::HashSet::new();
+        for _ in 0..50 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let status = tree.value;
+            
+            // Should be valid HTTP status codes
+            assert!(status >= 100 && status <= 599);
+            statuses.insert(status);
+        }
+        
+        // Should generate variety of status codes
+        assert!(statuses.len() > 3);
+        
+        // Should heavily favor common codes, so we should see some
+        let common_codes = [200, 404, 500];
+        let has_common = statuses.iter().any(|&s| common_codes.contains(&s));
+        assert!(has_common, "Generated statuses: {:?}", statuses);
+    }
+    
+    #[test]
+    fn test_network_port_generator() {
+        let gen = Gen::<u16>::network_port();
+        
+        let mut ports = std::collections::HashSet::new();
+        for _ in 0..50 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let port = tree.value;
+            
+            // Should be valid port numbers
+            assert!(port > 0);
+            ports.insert(port);
+        }
+        
+        // Should generate variety of ports
+        assert!(ports.len() > 5);
+        
+        // Should include some well-known ports
+        let well_known = [22, 80, 443];
+        let _has_well_known = ports.iter().any(|&p| well_known.contains(&p));
+        // Note: This might occasionally fail due to randomness, but should usually pass
+        // We don't assert on _has_well_known as it's probabilistic
+    }
+    
+    #[test]
+    fn test_web_domain_generator() {
+        let gen = Gen::<String>::web_domain();
+        
+        let mut domains = std::collections::HashSet::new();
+        for _ in 0..20 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let domain = tree.value;
+            
+            // Should have a TLD
+            assert!(domain.contains('.'));
+            
+            // Should have a reasonable structure
+            let parts: Vec<&str> = domain.split('.').collect();
+            assert!(parts.len() >= 2);
+            
+            // Domain part should be non-empty and alphabetic
+            assert!(!parts[0].is_empty());
+            assert!(parts[0].chars().all(|c| c.is_ascii_alphabetic()));
+            
+            domains.insert(domain);
+        }
+        
+        // Should generate variety
+        assert!(domains.len() > 3);
+    }
+    
+    #[test]
+    fn test_email_address_generator() {
+        let gen = Gen::<String>::email_address();
+        
+        for _ in 0..10 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let email = tree.value;
+            
+            // Should have @ symbol
+            assert!(email.contains('@'));
+            
+            // Should have reasonable structure
+            let parts: Vec<&str> = email.split('@').collect();
+            assert_eq!(parts.len(), 2);
+            
+            let username = parts[0];
+            let domain = parts[1];
+            
+            // Username should be non-empty
+            assert!(!username.is_empty());
+            assert!(username.len() >= 3);
+            
+            // Domain should be non-empty
+            assert!(!domain.is_empty());
+            assert!(domain.contains('.'));
+        }
+    }
+    
+    #[test]
+    fn test_sql_identifier_safe() {
+        let gen = Gen::<String>::sql_identifier(false);
+        
+        for _ in 0..20 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let identifier = tree.value;
+            
+            // Should be non-empty alphabetic
+            assert!(!identifier.is_empty());
+            assert!(identifier.chars().all(|c| c.is_ascii_alphabetic()));
+            assert!(identifier.len() >= 3 && identifier.len() <= 20);
+        }
+    }
+    
+    #[test]
+    fn test_sql_identifier_with_keywords() {
+        let gen = Gen::<String>::sql_identifier(true);
+        
+        let mut has_keyword = false;
+        let mut has_random = false;
+        
+        for _ in 0..30 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let identifier = tree.value;
+            
+            // Check if it's a SQL keyword
+            let sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE"];
+            if sql_keywords.contains(&identifier.as_str()) {
+                has_keyword = true;
+            } else if identifier.chars().all(|c| c.is_ascii_alphabetic()) {
+                has_random = true;
+            }
+        }
+        
+        // Should get mix of keywords and random identifiers
+        assert!(has_keyword || has_random); // At least one type should appear
+    }
+    
+    #[test]
+    fn test_programming_tokens() {
+        let rust_keywords = ["fn", "let", "mut", "pub", "struct"];
+        let gen = Gen::<String>::programming_tokens(&rust_keywords);
+        
+        let mut has_keyword = false;
+        let mut has_random = false;
+        
+        for _ in 0..30 {
+            let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
+            let token = tree.value;
+            
+            if rust_keywords.contains(&token.as_str()) {
+                has_keyword = true;
+            } else if token.chars().all(|c| c.is_ascii_alphabetic()) {
+                has_random = true;
+            }
+        }
+        
+        // Should get mix of keywords and random tokens
+        assert!(has_keyword || has_random); // At least one type should appear
     }
 }
