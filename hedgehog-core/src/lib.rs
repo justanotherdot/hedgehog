@@ -6,6 +6,7 @@
 pub mod data;
 pub mod error;
 pub mod gen;
+pub mod parallel;
 pub mod property;
 pub mod state;
 pub mod tree;
@@ -14,6 +15,7 @@ pub mod tree;
 pub use data::*;
 pub use error::*;
 pub use gen::*;
+pub use parallel::*;
 pub use property::*;
 pub use state::*;
 pub use tree::*;

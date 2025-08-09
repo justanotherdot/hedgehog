@@ -99,7 +99,7 @@ state.balance += input.amount - 1; // Off-by-one error
 
 ### 4. Race Condition Setup
 ```rust
-// With parallel execution, catches:
+// With parallel execution using for_all_parallel, catches:
 // - Concurrent access issues  
 // - Non-atomic operations
 // - Incorrect synchronization
@@ -201,7 +201,7 @@ Common debugging steps:
 - **Generation is fast** - Creating sequences is lightweight
 - **Execution matches your system** - Test speed depends on actual operations  
 - **Start with short sequences** - 10-20 operations, then increase
-- **Parallel testing available** - Use `execute_parallel` for concurrency testing
+- **Parallel testing available** - Use `for_all_parallel` for performance and concurrency testing
 
 The framework provides automatic shrinking of failing test cases to help you find minimal reproducing examples quickly.
 

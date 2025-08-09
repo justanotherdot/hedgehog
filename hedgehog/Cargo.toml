@@ -55,3 +55,7 @@ path = "../examples/tree-output.rs"
 [[example]]
 name = "classification"
 path = "../examples/classification.rs"
+
+[[example]]
+name = "parallel-testing"
+path = "../examples/parallel-testing.rs"
