@@ -12,17 +12,17 @@
 - Example integration with configurable strategies
 - Dictionary support - domain-specific token injection (web domains, HTTP codes, SQL keywords, etc.)
 - Parallel testing - multi-threaded property execution with race condition detection
+- Targeted property-based testing - search-guided generation using simulated annealing
 
 ## Next Priorities
 
 **Note**: Based on implementation velocity, these features can be completed in 2-3 weeks total.
 
 2. **Major Features** (Week 2: 1 week)
-   - Coverage-guided generation - use coverage feedback
+   - Coverage-guided generation - use coverage feedback to explore code paths
 
 3. **Advanced Features** (Week 3: 1-2 weeks)
    - Regression corpus - automatic failure persistence
-   - Advanced parallel features - systematic interleaving exploration, concurrent scenario DSL
    - Fault injection - systematic failure testing
 
 4. **Meta Testing** (Week 4: 1 week)

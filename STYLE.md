@@ -19,6 +19,22 @@ This document outlines coding and naming conventions for the Hedgehog project.
 
 This applies to all files: source files, test files, example files, and documentation.
 
+## Terminal Output
+
+**Never use ANSI color codes in command-line tools. Always start without color.**
+
+✅ **Enforced:**
+- `.cargo/config.toml` sets `color = "never"`
+- All scripts in `bin/` use `--color never`
+- No ANSI escape sequences in source code
+
+❌ **Avoid:**
+- Color output in any terminal tools
+- ANSI escape codes (`\x1b[`, `\033[`, etc.)
+- Dependencies that default to colored output
+
+This ensures consistent, clean output across all environments and follows the project's preference for minimal, functional interfaces.
+
 ## Code Identifiers
 
 Use noun-verb pattern for code identifiers:

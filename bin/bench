@@ -2,4 +2,4 @@
 
 # Run benchmarks for the hedgehog workspace
 
-cargo bench --workspace
+cargo bench --workspace --color never

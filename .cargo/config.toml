@@ -1,0 +1,7 @@
+[term]
+# Never use color in cargo output, following CLAUDE.md instructions
+color = "never"
+
+[env]
+# Set NO_COLOR environment variable to disable colors in dependencies
+NO_COLOR = "1"
