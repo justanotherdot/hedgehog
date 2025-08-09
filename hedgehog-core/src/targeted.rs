@@ -4,7 +4,9 @@
 //! search strategies like simulated annealing to guide input generation toward
 //! inputs that are more likely to find bugs or explore interesting behaviors.
 //!
-//! Based on research from "Targeted property-based testing" (Löscher & Sagonas, ISSTA 2017).
+//! The approach is inspired by the research presented in:
+//! "Targeted property-based testing" by Andreas Löscher and Konstantinos Sagonas (ISSTA 2017)
+//! Available at: http://proper.softlab.ntua.gr/papers/issta2017.pdf
 
 use crate::{data::*, gen::*};
 use rand::{Rng, RngCore};

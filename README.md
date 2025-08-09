@@ -450,7 +450,8 @@ This is a work-in-progress implementation. See [docs/roadmap.md](docs/roadmap.md
 ## Documentation
 
 - [Property Classification Guide](docs/property-classification.md) - Inspecting test data distribution and statistics
-- [Targeted Testing Comparison](docs/targeted-testing-comparison.md) - Comparison with PROPER implementation and features
+- [Targeted Testing Comparison](docs/targeted-testing-comparison.md) - Comparison with PROPER's approach and implementation choices
+- [Targeted Testing Effectiveness Analysis](docs/targeted-testing-effectiveness-analysis.md) - Detailed analysis of systematic search behavior and estimated efficiency gains
 - [Targeted Testing Future Improvements](docs/targeted-testing-future-improvements.md) - Roadmap for extending targeted testing capabilities
 - [Implementation Plan](docs/implementation-plan.md) - Detailed implementation roadmap
 - [Roadmap](docs/roadmap.md) - Project status and future plans
