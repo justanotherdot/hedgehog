@@ -300,4 +300,71 @@ use hedgehog_core::Tree;      // Wrong - should be tree::Tree
    })
    ```
 
-This completes the core API for state machine testing with Hedgehog.
+## Parallel Testing API
+
+### Functions
+
+- `for_all_parallel<T, F>(gen: Gen<T>, condition: F, thread_count: usize) -> ParallelProperty<T, ...>`
+  - Simple parallel property testing with automatic thread management
+- `parallel_property<T, F>(gen: Gen<T>, test_fn: F, config: ParallelConfig) -> ParallelProperty<T, F>`
+  - Advanced parallel property testing with custom configuration
+
+### Types
+
+**`ParallelConfig`** - Configuration for parallel execution
+```rust
+pub struct ParallelConfig {
+    pub thread_count: usize,                 // Number of threads to use
+    pub work_distribution: WorkDistribution, // How to distribute work
+    pub timeout: Option<Duration>,           // Timeout for deadlock detection
+    pub detect_non_determinism: bool,        // Enable race condition detection
+}
+```
+
+**`WorkDistribution`** - Strategy for distributing work across threads
+```rust
+pub enum WorkDistribution {
+    RoundRobin,    // Distribute tests evenly in round-robin fashion
+    ChunkBased,    // Process tests in chunks per thread
+    WorkStealing,  // Advanced load balancing (falls back to RoundRobin)
+}
+```
+
+**`ParallelTestResult`** - Results from parallel test execution
+```rust
+pub struct ParallelTestResult {
+    pub outcome: TestResult,                          // Overall test outcome
+    pub thread_results: Vec<TestResult>,              // Results from each thread
+    pub performance: ParallelPerformanceMetrics,     // Performance data
+    pub concurrency_issues: ConcurrencyIssues,       // Race conditions detected
+}
+```
+
+### Example Usage
+
+```rust
+use hedgehog_core::*;
+
+// Basic parallel testing
+let prop = for_all_parallel(
+    Gen::int_range(1, 100), 
+    |&n| n > 0, 
+    4  // 4 threads
+);
+
+// Advanced configuration
+let config = ParallelConfig {
+    thread_count: 8,
+    work_distribution: WorkDistribution::RoundRobin,
+    timeout: Some(Duration::from_secs(30)),
+    detect_non_determinism: true,
+};
+
+let prop = parallel_property(gen, test_fn, config);
+let result = prop.run(&Config::default().with_tests(1000));
+
+println!("Speedup: {:.2}x", result.performance.speedup_factor);
+println!("Thread efficiency: {:.1}%", result.performance.thread_efficiency * 100.0);
+```
+
+This completes the core API for property-based and state machine testing with Hedgehog.

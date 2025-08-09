@@ -14,6 +14,7 @@ Property-based testing library for Rust, inspired by the original [Hedgehog](htt
 - **Property classification** - Inspect test data distribution and statistics
 - **Example integration** - Mix explicit test examples with generated values
 - **Dictionary support** - Inject domain-specific realistic values (HTTP codes, SQL keywords, web domains)
+- **Parallel testing** - Speed up tests and detect race conditions with multi-threaded execution
 - **Derive macros** - Automatic generator creation for custom types
 
 ## Quick Start

@@ -11,6 +11,7 @@
 - Function generators for higher-order function testing
 - Example integration with configurable strategies
 - Dictionary support - domain-specific token injection (web domains, HTTP codes, SQL keywords, etc.)
+- Parallel testing - multi-threaded property execution with race condition detection
 
 ## Next Priorities
 
@@ -21,7 +22,7 @@
 
 3. **Advanced Features** (Week 3: 1-2 weeks)
    - Regression corpus - automatic failure persistence
-   - Parallel testing - find race conditions
+   - Advanced parallel features - systematic interleaving exploration, concurrent scenario DSL
    - Fault injection - systematic failure testing
 
 4. **Performance & Benchmarking**

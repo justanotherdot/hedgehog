@@ -232,7 +232,7 @@ fn property_counter_never_exceeds_max() {
 - **Generation is fast** - Creating test sequences is lightweight
 - **Execution mirrors your system** - Performance depends on actual operations
 - **Start small** - Begin with short sequences, increase length as needed
-- **Parallel testing** - Use `execute_parallel` for concurrency testing
+- **Parallel testing** - Use property-level `for_all_parallel` for concurrency testing
 
 ## Advanced Features
 
@@ -242,17 +242,13 @@ The framework automatically shrinks failing test cases to minimal examples. You 
 
 ### Parallel Execution
 
-Test concurrent scenarios:
+Test concurrent scenarios by wrapping your state machine properties with parallel testing:
 
 ```rust
-let parallel = generator.generate_parallel(
-    initial_state,
-    5,  // prefix length  
-    3,  // branch1 length
-    3,  // branch2 length  
-);
-
-execute_parallel(initial_state, parallel).unwrap();
+// Future: Advanced parallel state machine testing will provide:
+// - Systematic interleaving exploration 
+// - Concurrent scenario DSLs
+// For now, use for_all_parallel at the property level for basic parallelization
 ```
 
 ### Variable Dependencies
