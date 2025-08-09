@@ -25,16 +25,24 @@
    - Advanced parallel features - systematic interleaving exploration, concurrent scenario DSL
    - Fault injection - systematic failure testing
 
-4. **Performance & Benchmarking**
+4. **Meta Testing** (Week 4: 1 week)
+   - Property-based testing of Hedgehog itself
+   - Generator invariant testing (size bounds, distribution properties)
+   - Shrinking correctness properties (always produces smaller failures)
+   - Property combinator correctness (classifications, collections, examples)
+   - Statistical distribution validation
+   - Performance property testing (generation/shrinking time bounds)
+
+5. **Performance & Benchmarking**
    - Optimize generator performance
    - Benchmark against other property testing libraries
 
-5. **Additional Generators**
+6. **Additional Generators**
    - Date/time generators
    - Network/protocol generators
    - File system generators
 
-6. **Documentation & Examples**
+7. **Documentation & Examples**
    - Comprehensive user guide
    - Real-world examples and tutorials
 

@@ -308,6 +308,8 @@ use hedgehog_core::Tree;      // Wrong - should be tree::Tree
   - Simple parallel property testing with automatic thread management
 - `parallel_property<T, F>(gen: Gen<T>, test_fn: F, config: ParallelConfig) -> ParallelProperty<T, F>`
   - Advanced parallel property testing with custom configuration
+- `for_all_concurrent<T, F>(gen: Gen<T>, condition: F, thread_count: usize) -> ConcurrentProperty<T, ...>`
+  - Test the same input simultaneously from multiple threads to detect race conditions
 
 ### Types
 
@@ -340,6 +342,26 @@ pub struct ParallelTestResult {
 }
 ```
 
+**`ConcurrentProperty<T, F>`** - Property that tests the same input from multiple threads simultaneously
+```rust
+pub struct ConcurrentProperty<T, F> {
+    pub generator: Gen<T>,                // Generator for test inputs
+    pub test_function: Arc<F>,            // Thread-safe test function
+    pub thread_count: usize,              // Number of threads to run concurrently
+    pub timeout: Option<Duration>,        // Timeout for each concurrent test
+    pub variable_name: Option<String>,    // Variable name for debugging
+}
+```
+
+**`ConcurrentTestResult`** - Result of testing the same input concurrently
+```rust
+pub struct ConcurrentTestResult {
+    pub deterministic: bool,               // Whether all threads produced same result
+    pub results: Vec<TestResult>,          // Results from each thread
+    pub race_conditions_detected: usize,  // Number of race conditions detected
+    pub execution_times: Vec<Duration>,    // Thread execution times
+}
+```
 ### Example Usage
 
 ```rust
@@ -365,6 +387,23 @@ let result = prop.run(&Config::default().with_tests(1000));
 
 println!("Speedup: {:.2}x", result.performance.speedup_factor);
 println!("Thread efficiency: {:.1}%", result.performance.thread_efficiency * 100.0);
+
+// Concurrent testing for race condition detection
+let concurrent_prop = for_all_concurrent(
+    Gen::int_range(1, 100),
+    |&n| shared_system.process(n).is_ok(), // Your concurrent operation
+    8  // Test from 8 threads simultaneously
+);
+
+let results = concurrent_prop.run(&Config::default().with_tests(50));
+
+for (i, result) in results.iter().enumerate() {
+    if !result.deterministic {
+        println!("⚠ Race condition detected in test {}", i);
+        println!("  {} different results across {} threads", 
+                 result.race_conditions_detected, result.results.len());
+    }
+}
 ```
 
 This completes the core API for property-based and state machine testing with Hedgehog.
