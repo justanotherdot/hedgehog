@@ -10,15 +10,21 @@
 //! use hedgehog::*;
 //! use hedgehog::corpus;
 //! 
-//! // Use pre-defined collections directly
-//! let muppet_gen = Gen::one_of_slice(corpus::MUPPETS);
-//! let animal_gen = Gen::one_of_slice(corpus::ANIMALS);
+//! // Use generator functions for convenient access
+//! let muppet_gen = corpus::gen::muppet();
+//! let animal_gen = corpus::gen::animal();
 //! 
 //! // Test unicode handling with the glass collection
-//! let unicode_gen = Gen::one_of_slice(corpus::GLASS);
-//! let prop = for_all(unicode_gen, |text: &str| {
+//! let unicode_gen = corpus::gen::glass();
+//! let prop = for_all(unicode_gen, |text: &&str| {
 //!     // Test that your unicode handling works correctly
 //!     text.chars().count() > 0
+//! });
+//! 
+//! // Or use the collections directly if needed
+//! let custom_gen = Gen::new(|_size, seed| {
+//!     let idx = seed.next_bounded(corpus::MUPPETS.len() as u64).0 as usize;
+//!     Tree::singleton(corpus::MUPPETS[idx])
 //! });
 //! ```
 
@@ -341,56 +347,87 @@ mod tests {
 }
 
 /// Generator functions for convenient access to corpus collections
-impl<'a> Gen<&'a str> {
+pub mod gen {
+    use super::*;
+    
     /// Generate a random Muppet character name
     pub fn muppet() -> Gen<&'static str> {
-        Gen::one_of_slice(MUPPETS)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::MUPPETS.len() as u64).0 as usize;
+            Tree::singleton(super::MUPPETS[idx])
+        })
     }
     
     /// Generate a random animal name
     pub fn animal() -> Gen<&'static str> {
-        Gen::one_of_slice(ANIMALS)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::ANIMALS.len() as u64).0 as usize;
+            Tree::singleton(super::ANIMALS[idx])
+        })
     }
     
     /// Generate a random color name
     pub fn colour() -> Gen<&'static str> {
-        Gen::one_of_slice(COLOURS)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::COLOURS.len() as u64).0 as usize;
+            Tree::singleton(super::COLOURS[idx])
+        })
     }
     
     /// Generate a random fruit name
     pub fn fruit() -> Gen<&'static str> {
-        Gen::one_of_slice(FRUITS)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::FRUITS.len() as u64).0 as usize;
+            Tree::singleton(super::FRUITS[idx])
+        })
     }
     
     /// Generate a random vegetable name
     pub fn vegetable() -> Gen<&'static str> {
-        Gen::one_of_slice(VEGETABLES)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::VEGETABLES.len() as u64).0 as usize;
+            Tree::singleton(super::VEGETABLES[idx])
+        })
     }
     
     /// Generate a random weather condition
     pub fn weather() -> Gen<&'static str> {
-        Gen::one_of_slice(WEATHER)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::WEATHER.len() as u64).0 as usize;
+            Tree::singleton(super::WEATHER[idx])
+        })
     }
     
     /// Generate a random body of water name
     pub fn water() -> Gen<&'static str> {
-        Gen::one_of_slice(WATERS)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::WATERS.len() as u64).0 as usize;
+            Tree::singleton(super::WATERS[idx])
+        })
     }
     
     /// Generate a random cooking term
     pub fn cooking() -> Gen<&'static str> {
-        Gen::one_of_slice(COOKING)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::COOKING.len() as u64).0 as usize;
+            Tree::singleton(super::COOKING[idx])
+        })
     }
     
     /// Generate a random metasyntactic variable name
     pub fn metasyntactic() -> Gen<&'static str> {
-        Gen::one_of_slice(METASYNTACTIC)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::METASYNTACTIC.len() as u64).0 as usize;
+            Tree::singleton(super::METASYNTACTIC[idx])
+        })
     }
     
     /// Generate a random "I can eat glass" phrase in various languages and scripts.
     /// Excellent for testing unicode handling, text processing, and internationalization.
     pub fn glass() -> Gen<&'static str> {
-        Gen::one_of_slice(GLASS)
+        Gen::new(|_size, seed| {
+            let idx = seed.next_bounded(super::GLASS.len() as u64).0 as usize;
+            Tree::singleton(super::GLASS[idx])
+        })
     }
-}
 }
