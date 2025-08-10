@@ -34,7 +34,7 @@ fn example_parallel_performance() {
     
     // Create a parallel property that tests integer addition is commutative
     let parallel_prop = for_all_parallel(
-        Gen::tuple_of(Gen::int_range(1, 100), Gen::int_range(1, 100)),
+        Gen::<(i32, i32)>::tuple_of(Gen::int_range(1, 100), Gen::int_range(1, 100)),
         |(a, b)| a + b == b + a,
         4 // Use 4 threads
     );

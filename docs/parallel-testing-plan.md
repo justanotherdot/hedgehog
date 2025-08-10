@@ -267,7 +267,7 @@ let prop = for_all_interleavings(bank_test, |trace| {
 ```rust
 // Test thread-safe cache implementation
 let cache_stress = for_all_concurrent(
-    Gen::tuple_of(Gen::string_key(), Gen::string_value()),
+    Gen::<(String, String)>::tuple_of(Gen::string_key(), Gen::string_value()),
     8, // 8 concurrent threads
     |(key, value)| {
         cache.insert(key.clone(), value.clone());
