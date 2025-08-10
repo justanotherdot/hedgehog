@@ -44,6 +44,9 @@ mod result_option_properties;
 #[path = "meta-testing/composition-properties.rs"]
 mod composition_properties;
 
+#[path = "meta-testing/corpus-properties.rs"]
+mod corpus_properties;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +114,12 @@ mod tests {
     #[test]
     fn meta_test_composition_patterns() {
         composition_properties::test_recursive_composition();
+    }
+
+    #[test]
+    fn meta_test_corpus_examples() {
+        corpus_properties::test_web_input_validation_with_corpus();
+        corpus_properties::test_i18n_text_processing_with_glass();
     }
 }
 
