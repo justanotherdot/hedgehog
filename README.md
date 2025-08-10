@@ -171,6 +171,143 @@ fn prop_user_validation() {
 }
 ```
 
+### State Machine Testing
+
+Test stateful systems by generating sequences of commands and verifying state consistency:
+
+```rust
+use hedgehog::*;
+
+#[test]
+fn prop_shopping_cart_state_machine() {
+    #[derive(Debug, Clone, PartialEq)]
+    struct ShoppingCart {
+        items: HashMap<String, u32>, // item_id -> quantity
+        total: u32,
+        max_items: u32,
+    }
+    
+    impl ShoppingCart {
+        fn new() -> Self {
+            Self {
+                items: HashMap::new(),
+                total: 0,
+                max_items: 10,
+            }
+        }
+        
+        fn can_add_item(&self) -> bool {
+            self.total < self.max_items
+        }
+        
+        fn has_items(&self) -> bool {
+            !self.items.is_empty()
+        }
+    }
+    
+    #[derive(Clone, Debug)]
+    struct AddItemInput {
+        item_id: String,
+        quantity: u32,
+    }
+    
+    impl std::fmt::Display for AddItemInput {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}x{}", self.quantity, self.item_id)
+        }
+    }
+    
+    let mut generator = ActionGenerator::new();
+    
+    // Add item command - only available when cart isn't full
+    let add_cmd: Command<AddItemInput, bool, ShoppingCart, bool> = Command::new(
+        "add_item".to_string(),
+        |state: &ShoppingCart| {
+            if state.can_add_item() {
+                Some(Gen::new(|_size, seed| {
+                    let items = ["book", "phone", "laptop"];
+                    let (item_idx, new_seed) = seed.next_bounded(items.len() as u64);
+                    let (quantity, _) = new_seed.next_bounded(3);
+                    Tree::singleton(AddItemInput {
+                        item_id: items[item_idx as usize].to_string(),
+                        quantity: (quantity + 1) as u32,
+                    })
+                }))
+            } else {
+                None // Command not available when cart is full
+            }
+        },
+        |input: &AddItemInput, state: &mut ShoppingCart| {
+            let previous_quantity = state.items.get(&input.item_id).unwrap_or(&0);
+            let new_quantity = previous_quantity + input.quantity;
+            state.items.insert(input.item_id.clone(), new_quantity);
+            state.total += input.quantity;
+            true // Command succeeded
+        },
+        |_input: &AddItemInput, result: &bool, _state: &ShoppingCart| {
+            *result // Should always succeed when preconditions met
+        }
+    );
+    
+    // Remove item command - only available when cart has items
+    let remove_cmd: Command<String, bool, ShoppingCart, bool> = Command::new(
+        "remove_item".to_string(),
+        |state: &ShoppingCart| {
+            if state.has_items() {
+                let available_items: Vec<String> = state.items.keys().cloned().collect();
+                Some(Gen::new(move |_size, seed| {
+                    let (idx, _) = seed.next_bounded(available_items.len() as u64);
+                    Tree::singleton(available_items[idx as usize].clone())
+                }))
+            } else {
+                None
+            }
+        },
+        |item_id: &String, state: &mut ShoppingCart| {
+            if let Some(quantity) = state.items.get(item_id).copied() {
+                state.items.remove(item_id);
+                state.total -= quantity;
+                true
+            } else {
+                false
+            }
+        },
+        |_input: &String, result: &bool, _state: &ShoppingCart| {
+            *result // Should succeed when item exists
+        }
+    );
+    
+    generator.add_command(add_cmd);
+    generator.add_command(remove_cmd);
+    
+    let prop = for_all(
+        Gen::<Vec<Action<ShoppingCart>>>::actions(generator, ShoppingCart::new()),
+        |actions| {
+            let mut state = ShoppingCart::new();
+            for action in actions {
+                // Execute the action and verify the result
+                if !action.execute(&mut state) {
+                    return false; // Action failed unexpectedly
+                }
+                
+                // Verify state invariants after each action
+                let total_items: u32 = state.items.values().sum();
+                if total_items != state.total {
+                    return false; // State inconsistency
+                }
+                
+                if state.total > state.max_items {
+                    return false; // Violated capacity constraint
+                }
+            }
+            true
+        }
+    );
+    
+    assert!(matches!(prop.run(&Config::default()), TestResult::Pass { .. }));
+}
+```
+
 ### Targeted Property Testing
 
 Find inputs that maximize or minimize specific objectives using search-guided generation:
@@ -240,147 +377,6 @@ fn prop_find_slow_inputs() {
 }
 ```
 
-## Key Features
-
-### Explicit Generators
-
-Unlike type-directed approaches, Hedgehog generators are explicit values you create and compose:
-
-```rust
-let gen_small_int = Gen::int_range(1, 10);
-let gen_list = Gen::<Vec<i32>>::vec_of(gen_small_int);
-let gen_pair = Gen::<(i32, String)>::tuple_of(gen_small_int, Gen::<String>::ascii_alpha());
-
-// Generate functions as test inputs
-let gen_function = Gen::<Box<dyn Fn(i32) -> String>>::function_of(
-    Gen::int_range(0, 5),
-    Gen::<String>::ascii_alpha(),
-    "default".to_string()
-);
-```
-
-### Distribution Shaping
-
-Control probability distributions for realistic test data:
-
-```rust
-// Uniform distribution (equal probability)
-Gen::<i32>::from_range(Range::new(1, 100))
-
-// Linear distribution (favors smaller values)
-Gen::<i32>::from_range(Range::linear(1, 100))
-
-// Exponential distribution (strongly favors smaller values)
-Gen::<i32>::from_range(Range::exponential(1, 100))
-
-// Weighted choice
-Gen::frequency(vec![
-    WeightedChoice::new(8, Gen::constant("common")),
-    WeightedChoice::new(2, Gen::constant("rare")),
-])
-```
-
-### Variable Name Tracking
-
-Enhanced failure reporting with named inputs:
-
-```rust
-// Without variable names
-let prop = for_all(gen, |input| test_condition(input));
-// Output: │ Original: 42
-
-// With variable names
-let prop = for_all_named(gen, "input", |input| test_condition(input));
-// Output: │ forAll 0 = 42 -- input
-```
-
-### Property Classification
-
-Inspect the distribution of your test data to ensure generators produce realistic inputs:
-
-```rust
-let prop = for_all(Gen::int_range(-10, 10), |&x| x >= -10 && x <= 10)
-    .classify("negative", |&x| x < 0)
-    .classify("zero", |&x| x == 0)  
-    .classify("positive", |&x| x > 0)
-    .collect("absolute_value", |&x| x.abs() as f64);
-
-match prop.run(&Config::default()) {
-    TestResult::PassWithStatistics { statistics, .. } => {
-        // Shows distribution and statistics
-    }
-    _ => {}
-}
-```
-
-Output:
-```
-✓ property passed 100 tests.
-
-Test data distribution:
-  45% negative
-   3% zero
-  52% positive
-
-Test data statistics:
-  absolute_value: min=0.0, max=10.0, avg=4.2, median=3.0
-```
-
-### Integrated Shrinking
-
-When a test fails, Hedgehog automatically finds the minimal counterexample:
-
-```
-✗ property failed after 13 tests and 5 shrinks.
-
-    Shrinking progression:
-      │ forAll 0 = [1, 2, 3, 4, 5] -- list
-      │ forAll 1 = [1, 2, 3] -- list
-      │ forAll 2 = [1, 2] -- list
-      │ forAll 3 = [2] -- list
-      │ forAll 4 = [1] -- list
-      │ forAll 5 = [] -- list
-
-    Minimal counterexample: []
-```
-
-### Example Integration
-
-Mix explicit test examples with property-based testing to ensure critical edge cases are always tested:
-
-```rust
-// Test a division function with known problematic cases
-let critical_cases = vec![
-    (10, 0),        // Division by zero
-    (i32::MAX, 1),  // Maximum value
-    (i32::MIN, -1), // Potential overflow
-];
-
-let prop = for_all(
-    Gen::<(i32, i32)>::tuple_of(
-        Gen::int_range(-100, 100), 
-        Gen::int_range(-10, 10)
-    ),
-    |&(a, b)| {
-        match safe_divide(a, b) {
-            Some(result) => b != 0 && result == a / b,
-            None => b == 0 || (a == i32::MIN && b == -1)
-        }
-    }
-).with_examples(critical_cases); // Examples tested first, then random generation
-
-// Choose different integration strategies:
-use hedgehog::property::ExampleStrategy;
-
-// Mix examples throughout testing
-prop.with_examples_strategy(examples, ExampleStrategy::Mixed);
-
-// Generate first, then examples, then generate more  
-prop.with_examples_strategy(examples, ExampleStrategy::GeneratedFirst);
-
-// Test examples only for first 5 tests  
-prop.with_examples_strategy(examples, ExampleStrategy::ExamplesUpTo(5));
-```
 
 ## Documentation
 
@@ -437,15 +433,6 @@ Jacob passed away unexpectedly on April 9th, 2021. His absence is deeply felt, b
 
 This is a work-in-progress implementation. See [docs/roadmap.md](docs/roadmap.md) for the development plan.
 
-### Recently Completed
-
-- **Distribution Shaping and Range System** - Control probability distributions with uniform, linear, exponential, and constant distributions
-- **Variable Name Tracking** - Enhanced failure reporting showing named inputs in shrinking progression
-- **Frequency-Based Generation** - Weighted choice and one-of generators for realistic data patterns
-- **Property Classification** - Inspect test data distribution and gather statistics to validate generators
-- **Enhanced String Generation** - Controlled length ranges and distribution-based character generation
-- **Parallel Testing** - Multi-threaded property execution, concurrent testing for race conditions, deadlock detection
-- **Targeted Property Testing** - Search-guided generation using simulated annealing to find inputs that maximize/minimize objectives
 
 ## Documentation
 
