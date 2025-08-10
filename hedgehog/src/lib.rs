@@ -55,3 +55,6 @@ pub use hedgehog_core::*;
 // Re-export derive macros when available
 #[cfg(feature = "derive")]
 pub use hedgehog_derive::*;
+
+// Curated test data collections
+pub mod corpus;
