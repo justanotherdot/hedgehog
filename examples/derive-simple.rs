@@ -12,5 +12,5 @@ fn main() {
     let size = Size::new(10);
     let tree = gen.generate(size, seed);
     let simple = tree.outcome();
-    println!("Generated: {:?}", simple);
+    println!("Generated: {simple:?}");
 }

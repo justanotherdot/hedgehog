@@ -1,6 +1,6 @@
 //! Meta testing - using Hedgehog to test Hedgehog itself
-//! 
-//! This module contains properties that validate the correctness of Hedgehog's 
+//!
+//! This module contains properties that validate the correctness of Hedgehog's
 //! generators, shrinking, and property testing infrastructure.
 
 use hedgehog::*;
@@ -47,6 +47,16 @@ mod composition_properties;
 #[path = "meta-testing/corpus-properties.rs"]
 mod corpus_properties;
 
+/// Helper to generate sizes for meta testing  
+fn arbitrary_size() -> Gen<Size> {
+    Gen::<usize>::from_range(Range::new(0, 20)).map(Size::new)
+}
+
+/// Helper to generate seeds for meta testing
+fn arbitrary_seed() -> Gen<Seed> {
+    Gen::<u64>::from_range(Range::new(0, 10000)).map(Seed::from_u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,7 +66,7 @@ mod tests {
         generator_invariants::test_generator_size_bounds();
     }
 
-    #[test] 
+    #[test]
     fn meta_test_shrinking_convergence() {
         shrinking_properties::test_shrinking_convergence();
     }
@@ -122,14 +132,3 @@ mod tests {
         corpus_properties::test_i18n_text_processing_with_glass();
     }
 }
-
-/// Helper to generate sizes for meta testing  
-fn arbitrary_size() -> Gen<Size> {
-    Gen::<usize>::from_range(Range::new(0, 20)).map(Size::new)
-}
-
-/// Helper to generate seeds for meta testing
-fn arbitrary_seed() -> Gen<Seed> {
-    Gen::<u64>::from_range(Range::new(0, 10000)).map(Seed::from_u64)
-}
-

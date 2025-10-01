@@ -79,7 +79,7 @@ fn generate_struct_impl(data: &syn::DataStruct) -> Result<TokenStream2, syn::Err
                 .map(|(i, field)| {
                     let field_name = field.ident.as_ref().unwrap();
                     let field_var =
-                        syn::Ident::new(&format!("field_{}", i), proc_macro2::Span::call_site());
+                        syn::Ident::new(&format!("field_{i}"), proc_macro2::Span::call_site());
                     let generator = generate_field_generator(&field.ty)?;
                     Ok((field_name.clone(), field_var, generator))
                 })
@@ -121,7 +121,7 @@ fn generate_struct_impl(data: &syn::DataStruct) -> Result<TokenStream2, syn::Err
                 .enumerate()
                 .map(|(i, field)| {
                     let field_var =
-                        syn::Ident::new(&format!("field_{}", i), proc_macro2::Span::call_site());
+                        syn::Ident::new(&format!("field_{i}"), proc_macro2::Span::call_site());
                     let generator = generate_field_generator(&field.ty)?;
                     Ok((field_var, generator))
                 })
@@ -173,7 +173,7 @@ fn generate_enum_impl(data: &syn::DataEnum) -> Result<TokenStream2, syn::Error> 
                         .map(|(i, field)| {
                             let field_name = field.ident.as_ref().unwrap();
                             let field_var = syn::Ident::new(
-                                &format!("field_{}", i),
+                                &format!("field_{i}"),
                                 proc_macro2::Span::call_site(),
                             );
                             let generator = generate_field_generator(&field.ty)?;
@@ -217,7 +217,7 @@ fn generate_enum_impl(data: &syn::DataEnum) -> Result<TokenStream2, syn::Error> 
                         .enumerate()
                         .map(|(i, field)| {
                             let field_var = syn::Ident::new(
-                                &format!("field_{}", i),
+                                &format!("field_{i}"),
                                 proc_macro2::Span::call_site(),
                             );
                             let generator = generate_field_generator(&field.ty)?;

@@ -8,7 +8,7 @@ fn main() {
     // Example 1: Basic classification with integer ranges
     println!("1. Integer range classification:");
     let gen = Gen::int_range(-20, 20);
-    let prop = for_all(gen, |&x| x >= -20 && x <= 20)
+    let prop = for_all(gen, |&x| (-20..=20).contains(&x))
         .classify("negative", |&x| x < 0)
         .classify("zero", |&x| x == 0)
         .classify("positive", |&x| x > 0)
@@ -19,7 +19,7 @@ fn main() {
 
     let config = Config::default().with_tests(100);
     let result = prop.run_with_context(&config, Some("integer_classification"), None);
-    println!("{}\n", result);
+    println!("{result}\n");
 
     // Example 2: String classification
     println!("2. String classification:");
@@ -38,7 +38,7 @@ fn main() {
         });
 
     let result = string_prop.run_with_context(&config, Some("string_classification"), None);
-    println!("{}\n", result);
+    println!("{result}\n");
 
     // Example 3: Vector classification
     println!("3. Vector classification:");
@@ -61,5 +61,5 @@ fn main() {
         });
 
     let result = vec_prop.run_with_context(&config, Some("vector_classification"), None);
-    println!("{}\n", result);
+    println!("{result}\n");
 }

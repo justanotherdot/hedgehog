@@ -19,20 +19,19 @@ fn prop_division_safety() {
         (i32::MAX, 1),  // Maximum value
         (i32::MIN, -1), // Potential overflow
     ];
-    
+
     let prop = for_all_named(
-        Gen::<(i32, i32)>::tuple_of(
-            Gen::int_range(-50, 50),
-            Gen::int_range(-5, 5)
-        ), 
+        Gen::<(i32, i32)>::tuple_of(Gen::int_range(-50, 50), Gen::int_range(-5, 5)),
         "input",
-        |&(a, b)| {
-            match safe_divide(a, b) {
-                Some(result) => b != 0 && !(a == i32::MIN && b == -1) && result == a / b,
-                None => b == 0 || (a == i32::MIN && b == -1)
-            }
-        }
-    ).with_examples(critical_cases); // Examples tested first, then random pairs
-    
-    assert!(matches!(prop.run(&Config::default()), TestResult::Pass { .. }));
+        |&(a, b)| match safe_divide(a, b) {
+            Some(result) => b != 0 && !(a == i32::MIN && b == -1) && result == a / b,
+            None => b == 0 || (a == i32::MIN && b == -1),
+        },
+    )
+    .with_examples(critical_cases); // Examples tested first, then random pairs
+
+    assert!(matches!(
+        prop.run(&Config::default()),
+        TestResult::Pass { .. }
+    ));
 }

@@ -1,5 +1,5 @@
 //! Parallel testing infrastructure for concurrent property-based testing.
-//! 
+//!
 //! This module provides two main capabilities:
 //! 1. Parallel property execution - distribute tests across threads for speed
 //! 2. Concurrent system testing - detect race conditions and test thread safety
@@ -88,7 +88,7 @@ pub struct ParallelPerformanceMetrics {
 }
 
 /// Issues detected during concurrent testing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ConcurrencyIssues {
     /// Number of non-deterministic results detected
     pub non_deterministic_results: usize,
@@ -195,8 +195,8 @@ impl<T> ConcurrentScenarioBuilder<T> {
     }
 
     /// Add an operation to the scenario.
-    pub fn operation<F>(mut self, id: &str, function: F) -> Self 
-    where 
+    pub fn operation<F>(mut self, id: &str, function: F) -> Self
+    where
         F: Fn(&T) -> TestResult + Send + Sync + 'static,
     {
         self.scenario.operations.push(Operation {
@@ -210,8 +210,8 @@ impl<T> ConcurrentScenarioBuilder<T> {
     }
 
     /// Add an operation that depends on other operations.
-    pub fn operation_depends_on<F>(mut self, id: &str, depends_on: Vec<&str>, function: F) -> Self 
-    where 
+    pub fn operation_depends_on<F>(mut self, id: &str, depends_on: Vec<&str>, function: F) -> Self
+    where
         F: Fn(&T) -> TestResult + Send + Sync + 'static,
     {
         self.scenario.operations.push(Operation {
@@ -225,8 +225,8 @@ impl<T> ConcurrentScenarioBuilder<T> {
     }
 
     /// Add an operation on a specific thread.
-    pub fn operation_on_thread<F>(mut self, id: &str, thread_id: usize, function: F) -> Self 
-    where 
+    pub fn operation_on_thread<F>(mut self, id: &str, thread_id: usize, function: F) -> Self
+    where
         F: Fn(&T) -> TestResult + Send + Sync + 'static,
     {
         self.scenario.operations.push(Operation {
@@ -251,26 +251,32 @@ impl<T> ConcurrentScenarioBuilder<T> {
 
     /// Add a constraint that one operation must happen before another.
     pub fn before(mut self, before: &str, after: &str) -> Self {
-        self.scenario.constraints.push(InterleavingConstraint::Before {
-            before: before.to_string(),
-            after: after.to_string(),
-        });
+        self.scenario
+            .constraints
+            .push(InterleavingConstraint::Before {
+                before: before.to_string(),
+                after: after.to_string(),
+            });
         self
     }
 
     /// Add a constraint that operations must be atomic (no interleaving).
     pub fn atomic(mut self, operations: Vec<&str>) -> Self {
-        self.scenario.constraints.push(InterleavingConstraint::Atomic {
-            operations: operations.into_iter().map(|s| s.to_string()).collect(),
-        });
+        self.scenario
+            .constraints
+            .push(InterleavingConstraint::Atomic {
+                operations: operations.into_iter().map(|s| s.to_string()).collect(),
+            });
         self
     }
 
     /// Add a constraint that operations are mutually exclusive.
     pub fn exclusive(mut self, operations: Vec<&str>) -> Self {
-        self.scenario.constraints.push(InterleavingConstraint::Exclusive {
-            operations: operations.into_iter().map(|s| s.to_string()).collect(),
-        });
+        self.scenario
+            .constraints
+            .push(InterleavingConstraint::Exclusive {
+                operations: operations.into_iter().map(|s| s.to_string()).collect(),
+            });
         self
     }
 
@@ -280,7 +286,7 @@ impl<T> ConcurrentScenarioBuilder<T> {
     }
 }
 
-impl<T> ConcurrentScenario<T> 
+impl<T> ConcurrentScenario<T>
 where
     T: 'static + std::fmt::Debug + Clone + Send + Sync,
 {
@@ -293,14 +299,15 @@ where
 
         // For now, implement a simple sequential execution with constraint checking
         // TODO: Implement proper concurrent execution with barriers and dependencies
-        
+
         for operation in &self.operations {
             let result = (operation.function)(input);
             operation_results.insert(operation.id.clone(), result);
         }
 
         // Check constraints
-        let constraints_satisfied = self.check_constraints(&operation_results, &mut constraint_violations);
+        let constraints_satisfied =
+            self.check_constraints(&operation_results, &mut constraint_violations);
 
         ScenarioResult {
             scenario_name: self.name.clone(),
@@ -314,9 +321,9 @@ where
 
     /// Check if all constraints are satisfied.
     fn check_constraints(
-        &self, 
+        &self,
         _results: &std::collections::HashMap<String, TestResult>,
-        violations: &mut Vec<String>
+        violations: &mut Vec<String>,
     ) -> bool {
         // For now, just return true - proper constraint checking requires execution order tracking
         // TODO: Implement actual constraint validation based on execution traces
@@ -325,22 +332,31 @@ where
                 InterleavingConstraint::Before { before, after } => {
                     // This would need execution timestamps to verify
                     // For now, just log what we're checking
-                    if violations.is_empty() { // Placeholder to avoid unused variable warning
-                        violations.push(format!("Cannot verify 'before' constraint: {} -> {}", before, after));
+                    if violations.is_empty() {
+                        // Placeholder to avoid unused variable warning
+                        violations.push(format!(
+                            "Cannot verify 'before' constraint: {before} -> {after}"
+                        ));
                     }
                 }
                 InterleavingConstraint::Atomic { operations } => {
-                    violations.push(format!("Cannot verify 'atomic' constraint for operations: {:?}", operations));
+                    violations.push(format!(
+                        "Cannot verify 'atomic' constraint for operations: {operations:?}"
+                    ));
                 }
                 InterleavingConstraint::Exclusive { operations } => {
-                    violations.push(format!("Cannot verify 'exclusive' constraint for operations: {:?}", operations));
+                    violations.push(format!(
+                        "Cannot verify 'exclusive' constraint for operations: {operations:?}"
+                    ));
                 }
                 InterleavingConstraint::OneOf { operations } => {
-                    violations.push(format!("Cannot verify 'one_of' constraint for operations: {:?}", operations));
+                    violations.push(format!(
+                        "Cannot verify 'one_of' constraint for operations: {operations:?}"
+                    ));
                 }
             }
         }
-        
+
         // For now, return true if no violations were found
         violations.is_empty()
     }
@@ -379,8 +395,8 @@ where
     pub variable_name: Option<String>,
 }
 /// A property that can be executed in parallel.
-pub struct ParallelProperty<T, F> 
-where 
+pub struct ParallelProperty<T, F>
+where
     F: Fn(&T) -> TestResult + Send + Sync,
 {
     /// Generator for test inputs
@@ -427,7 +443,8 @@ where
         let mut seed = crate::data::Seed::random();
 
         for i in 0..test_config.test_limit {
-            let size = crate::data::Size::new((i * test_config.size_limit) / test_config.test_limit);
+            let size =
+                crate::data::Size::new((i * test_config.size_limit) / test_config.test_limit);
             let (test_seed, next_seed) = seed.split();
             seed = next_seed;
 
@@ -482,10 +499,12 @@ where
             if elapsed > timeout_duration {
                 timeout_detected = true;
                 hanging_threads.push(idx);
-                
+
                 // Add a timeout failure result
                 thread_results.push(TestResult::Fail {
-                    counterexample: format!("Thread {} timed out after {:?} with input: {:?}", idx, elapsed, input),
+                    counterexample: format!(
+                        "Thread {idx} timed out after {elapsed:?} with input: {input:?}"
+                    ),
                     tests_run: 1,
                     shrinks_performed: 0,
                     property_name: self.variable_name.clone(),
@@ -510,9 +529,11 @@ where
                 Err(JoinError::Timeout) => {
                     timeout_detected = true;
                     hanging_threads.push(idx);
-                    
+
                     thread_results.push(TestResult::Fail {
-                        counterexample: format!("Thread {} timed out after {:?} with input: {:?}", idx, timeout_duration, input),
+                        counterexample: format!(
+                            "Thread {idx} timed out after {timeout_duration:?} with input: {input:?}"
+                        ),
                         tests_run: 1,
                         shrinks_performed: 0,
                         property_name: self.variable_name.clone(),
@@ -526,7 +547,7 @@ where
                 Err(JoinError::Panic) => {
                     // Thread panicked - this is a concurrency issue
                     thread_results.push(TestResult::Fail {
-                        counterexample: format!("Thread {} panicked with input: {:?}", idx, input),
+                        counterexample: format!("Thread {idx} panicked with input: {input:?}"),
                         tests_run: 1,
                         shrinks_performed: 0,
                         property_name: self.variable_name.clone(),
@@ -541,7 +562,11 @@ where
         }
 
         // Analyze results for determinism
-        let deterministic = if timeout_detected { false } else { self.analyze_determinism(&thread_results) };
+        let deterministic = if timeout_detected {
+            false
+        } else {
+            self.analyze_determinism(&thread_results)
+        };
         if !deterministic && !timeout_detected {
             race_conditions_detected += 1;
         }
@@ -554,7 +579,7 @@ where
         // Generate deadlock info if timeout was detected
         let deadlock_info = if timeout_detected {
             Some(DeadlockInfo {
-                input: format!("{:?}", input),
+                input: format!("{input:?}"),
                 threads_involved: hanging_threads,
                 timeout_duration,
                 detected_at: std::time::SystemTime::now(),
@@ -573,13 +598,17 @@ where
     }
 
     /// Join a thread handle with timeout support.
-    fn join_with_timeout(&self, handle: thread::JoinHandle<(usize, TestResult, Duration)>, timeout: Duration) -> std::result::Result<(usize, TestResult, Duration), JoinError> {
+    fn join_with_timeout(
+        &self,
+        handle: thread::JoinHandle<(usize, TestResult, Duration)>,
+        timeout: Duration,
+    ) -> std::result::Result<(usize, TestResult, Duration), JoinError> {
         // Rust's JoinHandle doesn't have built-in timeout, so we simulate it
         // In a production implementation, you'd want to use a more sophisticated approach
         // For now, we'll use a simple busy-wait approach
         let start = Instant::now();
         let mut handle = Some(handle);
-        
+
         while start.elapsed() < timeout {
             if let Some(h) = &handle {
                 if h.is_finished() {
@@ -591,7 +620,7 @@ where
             }
             thread::sleep(Duration::from_millis(10)); // Small delay to avoid busy-waiting
         }
-        
+
         // If we get here, we timed out
         Err(JoinError::Timeout)
     }
@@ -602,24 +631,31 @@ where
         }
 
         let first_result_type = Self::result_type(&results[0]);
-        
+
         // Check if all results have the same type and outcome
         for result in results.iter().skip(1) {
             if Self::result_type(result) != first_result_type {
                 return false;
             }
-            
+
             // For failures, also check if counterexamples are the same
-            match (&results[0], result) {
-                (TestResult::Fail { counterexample: ce1, .. }, TestResult::Fail { counterexample: ce2, .. }) => {
-                    if ce1 != ce2 {
-                        return false;
-                    }
+            if let (
+                TestResult::Fail {
+                    counterexample: ce1,
+                    ..
+                },
+                TestResult::Fail {
+                    counterexample: ce2,
+                    ..
+                },
+            ) = (&results[0], result)
+            {
+                if ce1 != ce2 {
+                    return false;
                 }
-                _ => {}
             }
         }
-        
+
         true
     }
 
@@ -640,7 +676,7 @@ where
 {
     /// Create a new parallel property.
     pub fn new(generator: Gen<T>, test_function: F, config: ParallelConfig) -> Self {
-        ParallelProperty { 
+        ParallelProperty {
             generator,
             test_function: Arc::new(test_function),
             config,
@@ -657,37 +693,37 @@ where
     /// Run the property tests in parallel across multiple threads.
     pub fn run(&self, test_config: &Config) -> ParallelTestResult {
         let start_time = Instant::now();
-        
+
         // Pre-generate all test inputs to avoid Send/Sync issues with Gen<T>
         let total_tests = test_config.test_limit;
         let mut seed = crate::data::Seed::random();
         let mut test_inputs = Vec::with_capacity(total_tests);
-        
+
         for i in 0..total_tests {
             let size = crate::data::Size::new((i * test_config.size_limit) / total_tests);
             let (test_seed, next_seed) = seed.split();
             seed = next_seed;
-            
+
             let tree = self.generator.generate(size, test_seed);
             test_inputs.push(tree.value);
         }
-        
+
         // Calculate work distribution
         let threads = self.config.thread_count;
         let work_items = self.distribute_work(total_tests, threads);
-        
+
         let mut thread_handles = Vec::new();
         let mut input_start = 0;
-        
+
         // Spawn worker threads
         for (thread_id, test_count) in work_items.into_iter().enumerate() {
             let thread_inputs = test_inputs[input_start..input_start + test_count].to_vec();
             input_start += test_count;
-            
+
             let test_function = Arc::clone(&self.test_function);
             let timeout = self.config.timeout;
             let variable_name = self.variable_name.clone();
-            
+
             let handle = thread::spawn(move || {
                 Self::run_thread_tests_with_inputs(
                     thread_id,
@@ -697,14 +733,14 @@ where
                     variable_name,
                 )
             });
-            
+
             thread_handles.push(handle);
         }
-        
+
         // Collect results from all threads
         let mut thread_results = Vec::new();
         let mut concurrency_issues = ConcurrencyIssues::default();
-        
+
         for handle in thread_handles {
             match handle.join() {
                 Ok(result) => {
@@ -713,21 +749,20 @@ where
                     Self::analyze_thread_result(&result, &mut concurrency_issues);
                 }
                 Err(_) => {
-                    concurrency_issues.thread_failures.push("Thread panicked".to_string());
+                    concurrency_issues
+                        .thread_failures
+                        .push("Thread panicked".to_string());
                 }
             }
         }
-        
+
         let total_duration = start_time.elapsed();
-        
+
         // Aggregate results and compute metrics
         let outcome = Self::aggregate_results(&thread_results);
-        let performance = Self::calculate_performance_metrics(
-            total_duration,
-            &thread_results,
-            threads,
-        );
-        
+        let performance =
+            Self::calculate_performance_metrics(total_duration, &thread_results, threads);
+
         ParallelTestResult {
             outcome,
             thread_results,
@@ -742,13 +777,13 @@ where
             WorkDistribution::RoundRobin => {
                 let base_work = total_tests / thread_count;
                 let remainder = total_tests % thread_count;
-                
+
                 (0..thread_count)
                     .map(|i| base_work + if i < remainder { 1 } else { 0 })
                     .collect()
             }
             WorkDistribution::ChunkBased => {
-                let chunk_size = (total_tests + thread_count - 1) / thread_count;
+                let chunk_size = total_tests.div_ceil(thread_count);
                 (0..thread_count)
                     .map(|i| {
                         let start = i * chunk_size;
@@ -767,7 +802,7 @@ where
     fn distribute_work_round_robin(&self, total_tests: usize, thread_count: usize) -> Vec<usize> {
         let base_work = total_tests / thread_count;
         let remainder = total_tests % thread_count;
-        
+
         (0..thread_count)
             .map(|i| base_work + if i < remainder { 1 } else { 0 })
             .collect()
@@ -782,7 +817,7 @@ where
         _variable_name: Option<String>,
     ) -> TestResult {
         let mut tests_run = 0;
-        
+
         for input in test_inputs {
             tests_run += 1;
             match test_function(&input) {
@@ -790,7 +825,7 @@ where
                 result @ TestResult::Fail { .. } => {
                     // Return the failure result with updated test count
                     match result {
-                        TestResult::Fail { 
+                        TestResult::Fail {
                             counterexample,
                             shrinks_performed,
                             property_name,
@@ -815,7 +850,7 @@ where
                 other => return other,
             }
         }
-        
+
         // All tests passed
         TestResult::Pass {
             tests_run,
@@ -826,12 +861,9 @@ where
 
     /// Analyze a thread result for concurrency issues.
     fn analyze_thread_result(result: &TestResult, issues: &mut ConcurrencyIssues) {
-        match result {
-            TestResult::Fail { .. } => {
-                // Could be a race condition if other threads passed
-                issues.non_deterministic_results += 1;
-            }
-            _ => {}
+        if let TestResult::Fail { .. } = result {
+            // Could be a race condition if other threads passed
+            issues.non_deterministic_results += 1;
         }
     }
 
@@ -846,11 +878,14 @@ where
         }
 
         // If all threads passed, aggregate the success
-        let total_tests: usize = thread_results.iter().map(|r| match r {
-            TestResult::Pass { tests_run, .. } => *tests_run,
-            TestResult::PassWithStatistics { tests_run, .. } => *tests_run,
-            _ => 0,
-        }).sum();
+        let total_tests: usize = thread_results
+            .iter()
+            .map(|r| match r {
+                TestResult::Pass { tests_run, .. } => *tests_run,
+                TestResult::PassWithStatistics { tests_run, .. } => *tests_run,
+                _ => 0,
+            })
+            .sum();
 
         TestResult::Pass {
             tests_run: total_tests,
@@ -865,11 +900,14 @@ where
         thread_results: &[TestResult],
         thread_count: usize,
     ) -> ParallelPerformanceMetrics {
-        let _total_tests: usize = thread_results.iter().map(|r| match r {
-            TestResult::Pass { tests_run, .. } => *tests_run,
-            TestResult::PassWithStatistics { tests_run, .. } => *tests_run,
-            _ => 0,
-        }).sum();
+        let _total_tests: usize = thread_results
+            .iter()
+            .map(|r| match r {
+                TestResult::Pass { tests_run, .. } => *tests_run,
+                TestResult::PassWithStatistics { tests_run, .. } => *tests_run,
+                _ => 0,
+            })
+            .sum();
 
         // Estimate sequential time (very rough)
         let estimated_sequential_time = total_duration * thread_count as u32;
@@ -884,20 +922,12 @@ where
     }
 }
 
-impl Default for ConcurrencyIssues {
-    fn default() -> Self {
-        ConcurrencyIssues {
-            non_deterministic_results: 0,
-            potential_deadlocks: 0,
-            timeouts: 0,
-            thread_failures: Vec::new(),
-            deadlock_details: Vec::new(),
-        }
-    }
-}
-
 /// Create a parallel property for testing with multiple threads.
-pub fn for_all_parallel<T, F>(generator: Gen<T>, condition: F, thread_count: usize) -> ParallelProperty<T, impl Fn(&T) -> TestResult + Send + Sync>
+pub fn for_all_parallel<T, F>(
+    generator: Gen<T>,
+    condition: F,
+    thread_count: usize,
+) -> ParallelProperty<T, impl Fn(&T) -> TestResult + Send + Sync>
 where
     T: 'static + std::fmt::Debug + Clone + Send + Sync,
     F: Fn(&T) -> bool + Send + Sync + 'static,
@@ -906,29 +936,37 @@ where
         thread_count,
         ..ParallelConfig::default()
     };
-    ParallelProperty::new(generator, move |input| {
-        if condition(input) {
-            TestResult::Pass {
-                tests_run: 1,
-                property_name: None,
-                module_path: None,
+    ParallelProperty::new(
+        generator,
+        move |input| {
+            if condition(input) {
+                TestResult::Pass {
+                    tests_run: 1,
+                    property_name: None,
+                    module_path: None,
+                }
+            } else {
+                TestResult::Fail {
+                    counterexample: format!("{input:?}"),
+                    tests_run: 0,
+                    shrinks_performed: 0,
+                    property_name: None,
+                    module_path: None,
+                    assertion_type: Some("Boolean Condition".to_string()),
+                    shrink_steps: Vec::new(),
+                }
             }
-        } else {
-            TestResult::Fail {
-                counterexample: format!("{:?}", input),
-                tests_run: 0,
-                shrinks_performed: 0,
-                property_name: None,
-                module_path: None,
-                assertion_type: Some("Boolean Condition".to_string()),
-                shrink_steps: Vec::new(),
-            }
-        }
-    }, config)
+        },
+        config,
+    )
 }
 
 /// Create a parallel property with a custom test function.
-pub fn parallel_property<T, F>(generator: Gen<T>, test_function: F, config: ParallelConfig) -> ParallelProperty<T, F>
+pub fn parallel_property<T, F>(
+    generator: Gen<T>,
+    test_function: F,
+    config: ParallelConfig,
+) -> ParallelProperty<T, F>
 where
     T: 'static + std::fmt::Debug + Clone + Send + Sync,
     F: Fn(&T) -> TestResult + Send + Sync + 'static,
@@ -937,37 +975,41 @@ where
 }
 
 /// Test the same input simultaneously from multiple threads to detect race conditions.
-/// 
+///
 /// This function takes a single generated input and tests it concurrently from multiple threads.
 /// It detects non-deterministic behavior by comparing results across threads.
 pub fn for_all_concurrent<T, F>(
-    generator: Gen<T>, 
-    condition: F, 
-    thread_count: usize
+    generator: Gen<T>,
+    condition: F,
+    thread_count: usize,
 ) -> ConcurrentProperty<T, impl Fn(&T) -> TestResult + Send + Sync>
 where
     T: 'static + std::fmt::Debug + Clone + Send + Sync,
     F: Fn(&T) -> bool + Send + Sync + 'static,
 {
-    ConcurrentProperty::new(generator, move |input| {
-        if condition(input) {
-            TestResult::Pass {
-                tests_run: 1,
-                property_name: None,
-                module_path: None,
+    ConcurrentProperty::new(
+        generator,
+        move |input| {
+            if condition(input) {
+                TestResult::Pass {
+                    tests_run: 1,
+                    property_name: None,
+                    module_path: None,
+                }
+            } else {
+                TestResult::Fail {
+                    counterexample: format!("{input:?}"),
+                    tests_run: 1,
+                    shrinks_performed: 0,
+                    property_name: None,
+                    module_path: None,
+                    assertion_type: Some("Boolean Condition".to_string()),
+                    shrink_steps: Vec::new(),
+                }
             }
-        } else {
-            TestResult::Fail {
-                counterexample: format!("{:?}", input),
-                tests_run: 1,
-                shrinks_performed: 0,
-                property_name: None,
-                module_path: None,
-                assertion_type: Some("Boolean Condition".to_string()),
-                shrink_steps: Vec::new(),
-            }
-        }
-    }, thread_count)
+        },
+        thread_count,
+    )
 }
 
 /// Create a concurrent scenario builder.
@@ -976,7 +1018,7 @@ pub fn concurrent_scenario<T>(name: &str) -> ConcurrentScenarioBuilder<T> {
 }
 
 /// Systematic interleaving exploration for finding race conditions.
-pub struct InterleavingExplorer<T, F> 
+pub struct InterleavingExplorer<T, F>
 where
     F: Fn(&T) -> TestResult + Send + Sync,
 {
@@ -1039,7 +1081,7 @@ where
         InterleavingExplorer {
             generator,
             test_function: Arc::new(test_function),
-            operation_count: 3, // Default to 3 concurrent operations
+            operation_count: 3,    // Default to 3 concurrent operations
             max_interleavings: 50, // Limit to prevent combinatorial explosion
             timeout: Some(Duration::from_secs(1)),
         }
@@ -1069,7 +1111,8 @@ where
         let mut seed = crate::data::Seed::random();
 
         for i in 0..test_config.test_limit {
-            let size = crate::data::Size::new((i * test_config.size_limit) / test_config.test_limit);
+            let size =
+                crate::data::Size::new((i * test_config.size_limit) / test_config.test_limit);
             let (test_seed, next_seed) = seed.split();
             seed = next_seed;
 
@@ -1094,34 +1137,40 @@ where
 
         // For now, implement a simplified version that just tests with different random seeds
         // TODO: Implement true systematic interleaving exploration
-        
+
         for interleaving_attempt in 0..self.max_interleavings {
             interleavings_explored += 1;
-            
+
             // For now, just run the test function multiple times
             // A real implementation would control thread scheduling
-            let results = self.run_concurrent_test_with_controlled_scheduling(input, interleaving_attempt);
-            
+            let results =
+                self.run_concurrent_test_with_controlled_scheduling(input, interleaving_attempt);
+
             // Check if this interleaving produced different results (indicating race conditions)
             if !self.is_deterministic(&results) {
                 failed_interleavings += 1;
                 race_conditions_detected += 1;
-                
+
                 // Create a failing pattern
                 let pattern = InterleavingPattern {
                     sequence: self.generate_thread_sequence(interleaving_attempt),
-                    failure_result: results.get(0).cloned().unwrap_or_else(|| TestResult::Fail {
-                        counterexample: format!("Non-deterministic result for input: {:?}", input),
-                        tests_run: 1,
-                        shrinks_performed: 0,
-                        property_name: None,
-                        module_path: None,
-                        assertion_type: Some("Race Condition".to_string()),
-                        shrink_steps: Vec::new(),
-                    }),
+                    failure_result: results
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| TestResult::Fail {
+                            counterexample: format!(
+                                "Non-deterministic result for input: {input:?}"
+                            ),
+                            tests_run: 1,
+                            shrinks_performed: 0,
+                            property_name: None,
+                            module_path: None,
+                            assertion_type: Some("Race Condition".to_string()),
+                            shrink_steps: Vec::new(),
+                        }),
                     threads_involved: (0..self.operation_count).collect(),
                 };
-                
+
                 failing_patterns.push(pattern);
             }
         }
@@ -1136,28 +1185,30 @@ where
     }
 
     /// Run concurrent test with controlled scheduling (simplified implementation).
-    fn run_concurrent_test_with_controlled_scheduling(&self, input: &T, _schedule_seed: usize) -> Vec<TestResult> {
+    fn run_concurrent_test_with_controlled_scheduling(
+        &self,
+        input: &T,
+        _schedule_seed: usize,
+    ) -> Vec<TestResult> {
         // For now, just run the same test from multiple threads
         // A real implementation would use thread scheduling control
         let mut handles = Vec::new();
-        
+
         for _thread_id in 0..self.operation_count {
             let input_clone = input.clone();
             let test_function = Arc::clone(&self.test_function);
-            
-            let handle = thread::spawn(move || {
-                test_function(&input_clone)
-            });
-            
+
+            let handle = thread::spawn(move || test_function(&input_clone));
+
             handles.push(handle);
         }
-        
+
         let mut results = Vec::new();
         for handle in handles {
             match handle.join() {
                 Ok(result) => results.push(result),
                 Err(_) => results.push(TestResult::Fail {
-                    counterexample: format!("Thread panic with input: {:?}", input),
+                    counterexample: format!("Thread panic with input: {input:?}"),
                     tests_run: 1,
                     shrinks_performed: 0,
                     property_name: None,
@@ -1167,7 +1218,7 @@ where
                 }),
             }
         }
-        
+
         results
     }
 
@@ -1176,16 +1227,18 @@ where
         if results.is_empty() {
             return true;
         }
-        
+
         let first_result_type = Self::result_type(&results[0]);
-        results.iter().all(|r| Self::result_type(r) == first_result_type)
+        results
+            .iter()
+            .all(|r| Self::result_type(r) == first_result_type)
     }
 
     /// Get a simplified result type for comparison.
     fn result_type(result: &TestResult) -> &'static str {
         match result {
             TestResult::Pass { .. } => "pass",
-            TestResult::PassWithStatistics { .. } => "pass_with_stats", 
+            TestResult::PassWithStatistics { .. } => "pass_with_stats",
             TestResult::Fail { .. } => "fail",
             TestResult::Discard { .. } => "discard",
         }
@@ -1195,18 +1248,21 @@ where
     fn generate_thread_sequence(&self, attempt: usize) -> Vec<ThreadOperation> {
         // This is a simplified implementation
         // A real implementation would generate actual interleaving sequences
-        (0..self.operation_count).map(|thread_id| {
-            ThreadOperation {
+        (0..self.operation_count)
+            .map(|thread_id| ThreadOperation {
                 thread_id,
                 step: attempt * self.operation_count + thread_id,
-                operation: format!("op_{}", thread_id),
-            }
-        }).collect()
+                operation: format!("op_{thread_id}"),
+            })
+            .collect()
     }
 }
 
 /// Create an interleaving explorer for systematic race condition detection.
-pub fn interleaving_explorer<T, F>(generator: Gen<T>, test_function: F) -> InterleavingExplorer<T, F>
+pub fn interleaving_explorer<T, F>(
+    generator: Gen<T>,
+    test_function: F,
+) -> InterleavingExplorer<T, F>
 where
     T: 'static + std::fmt::Debug + Clone + Send + Sync,
     F: Fn(&T) -> TestResult + Send + Sync + 'static,
@@ -1302,7 +1358,7 @@ pub struct LoadTestPhases {
 }
 
 /// Load generator for stress testing concurrent systems.
-pub struct LoadGenerator<T, F> 
+pub struct LoadGenerator<T, F>
 where
     F: Fn(&T) -> TestResult + Send + Sync,
 {
@@ -1331,60 +1387,64 @@ where
     /// Execute the load test.
     pub fn run_load_test(&self) -> LoadTestResult {
         let start_time = Instant::now();
-        
+
         // Pre-generate test inputs to avoid generator contention during load test
         let input_count = (self.config.duration.as_secs() as usize + 10) * self.config.thread_count;
         let test_inputs = self.generate_test_inputs(input_count);
-        
+
         let mut thread_handles = Vec::new();
         let mut stats = LoadTestStats::default();
-        
+
         // Phase 1: Ramp up
         let ramp_up_start = Instant::now();
-        println!("🚀 Load test ramp-up starting with {} threads...", self.config.thread_count);
-        
+        println!(
+            "🚀 Load test ramp-up starting with {} threads...",
+            self.config.thread_count
+        );
+
         // Spawn worker threads
         for thread_id in 0..self.config.thread_count {
             let inputs = test_inputs.clone();
             let test_function = Arc::clone(&self.test_function);
             let config = self.config.clone();
             let thread_start_delay = Duration::from_millis(
-                (thread_id as u64 * self.config.ramp_up_duration.as_millis() as u64) / self.config.thread_count as u64
+                (thread_id as u64 * self.config.ramp_up_duration.as_millis() as u64)
+                    / self.config.thread_count as u64,
             );
-            
+
             let handle = thread::spawn(move || {
                 // Stagger thread starts during ramp-up
                 thread::sleep(thread_start_delay);
-                
+
                 Self::worker_thread(thread_id, inputs, test_function, config)
             });
-            
+
             thread_handles.push(handle);
         }
-        
+
         let ramp_up_time = ramp_up_start.elapsed();
-        
+
         // Phase 2: Steady state (wait for load test to complete)
         let steady_state_start = Instant::now();
         thread::sleep(self.config.duration);
         let steady_state_time = steady_state_start.elapsed();
-        
+
         // Phase 3: Cool down and collect results
         let cool_down_start = Instant::now();
         println!("🔽 Load test cooling down...");
-        
+
         let mut thread_results = Vec::new();
         let mut all_response_times = Vec::new();
         let mut total_ops = 0;
         let mut failed_ops = 0;
-        
+
         for handle in thread_handles {
             match handle.join() {
                 Ok((thread_stats, response_times)) => {
                     total_ops += thread_stats.operations_completed;
                     failed_ops += thread_stats.operations_failed;
                     all_response_times.extend(response_times);
-                    
+
                     thread_results.push(TestResult::Pass {
                         tests_run: thread_stats.operations_completed,
                         property_name: Some("load_test".to_string()),
@@ -1404,10 +1464,10 @@ where
                 }
             }
         }
-        
+
         let cool_down_time = cool_down_start.elapsed();
         let total_time = start_time.elapsed();
-        
+
         // Calculate statistics
         all_response_times.sort();
         let avg_response_time = if !all_response_times.is_empty() {
@@ -1415,24 +1475,33 @@ where
         } else {
             Duration::from_secs(0)
         };
-        
+
         let p95_response_time = if !all_response_times.is_empty() {
             let index = (all_response_times.len() as f64 * 0.95) as usize;
-            all_response_times.get(index).copied().unwrap_or(Duration::from_secs(0))
+            all_response_times
+                .get(index)
+                .copied()
+                .unwrap_or(Duration::from_secs(0))
         } else {
             Duration::from_secs(0)
         };
-        
+
         let p99_response_time = if !all_response_times.is_empty() {
             let index = (all_response_times.len() as f64 * 0.99) as usize;
-            all_response_times.get(index).copied().unwrap_or(Duration::from_secs(0))
+            all_response_times
+                .get(index)
+                .copied()
+                .unwrap_or(Duration::from_secs(0))
         } else {
             Duration::from_secs(0)
         };
-        
-        let max_response_time = all_response_times.last().copied().unwrap_or(Duration::from_secs(0));
+
+        let max_response_time = all_response_times
+            .last()
+            .copied()
+            .unwrap_or(Duration::from_secs(0));
         let avg_ops_per_second = total_ops as f64 / steady_state_time.as_secs_f64();
-        
+
         stats.operations_completed = total_ops;
         stats.operations_failed = failed_ops;
         stats.avg_ops_per_second = avg_ops_per_second;
@@ -1442,12 +1511,14 @@ where
         stats.p99_response_time = p99_response_time;
         stats.max_response_time = max_response_time;
         stats.response_times = all_response_times;
-        stats.thread_utilization = if thread_results.is_empty() { 0.0 } else { 
-            thread_results.len() as f64 / self.config.thread_count as f64 
+        stats.thread_utilization = if thread_results.is_empty() {
+            0.0
+        } else {
+            thread_results.len() as f64 / self.config.thread_count as f64
         };
         stats.deadlocks_detected = 0; // Would need more sophisticated detection
         stats.memory_usage_mb = None;
-        
+
         LoadTestResult {
             config: self.config.clone(),
             stats,
@@ -1458,10 +1529,10 @@ where
                 cool_down_time,
                 total_time,
             },
-            success_rate: if total_ops > 0 { 
-                (total_ops - failed_ops) as f64 / total_ops as f64 
-            } else { 
-                0.0 
+            success_rate: if total_ops > 0 {
+                (total_ops - failed_ops) as f64 / total_ops as f64
+            } else {
+                0.0
             },
         }
     }
@@ -1470,16 +1541,16 @@ where
     fn generate_test_inputs(&self, count: usize) -> Vec<T> {
         let mut inputs = Vec::with_capacity(count);
         let mut seed = crate::data::Seed::random();
-        
+
         for i in 0..count {
             let size = crate::data::Size::new((i % 100) + 1); // Vary size
             let (test_seed, next_seed) = seed.split();
             seed = next_seed;
-            
+
             let tree = self.generator.generate(size, test_seed);
             inputs.push(tree.value);
         }
-        
+
         inputs
     }
 
@@ -1495,18 +1566,18 @@ where
         let mut operations_failed = 0;
         let mut response_times = Vec::new();
         let mut input_iter = inputs.iter().cycle();
-        
+
         // Run until duration expires
         while start_time.elapsed() < config.duration {
             if let Some(input) = input_iter.next() {
                 let op_start = Instant::now();
                 let result = test_function(input);
                 let response_time = op_start.elapsed();
-                
+
                 if config.collect_stats {
                     response_times.push(response_time);
                 }
-                
+
                 match result {
                     TestResult::Pass { .. } => operations_completed += 1,
                     TestResult::Fail { .. } => {
@@ -1515,7 +1586,7 @@ where
                     }
                     _ => operations_completed += 1,
                 }
-                
+
                 // Rate limiting if specified
                 if let Some(target_ops_per_sec) = config.ops_per_second {
                     let target_interval = Duration::from_secs_f64(1.0 / target_ops_per_sec as f64);
@@ -1525,7 +1596,7 @@ where
                 }
             }
         }
-        
+
         let thread_stats = LoadTestStats {
             operations_completed,
             operations_failed,
@@ -1540,7 +1611,7 @@ where
             deadlocks_detected: 0,
             memory_usage_mb: None,
         };
-        
+
         (thread_stats, response_times)
     }
 }
@@ -1593,13 +1664,17 @@ mod tests {
             work_distribution: WorkDistribution::RoundRobin,
             ..ParallelConfig::default()
         };
-        
+
         let prop = ParallelProperty::new(
             Gen::bool(),
-            |_| TestResult::Pass { tests_run: 1, property_name: None, module_path: None },
+            |_| TestResult::Pass {
+                tests_run: 1,
+                property_name: None,
+                module_path: None,
+            },
             config,
         );
-        
+
         let work = prop.distribute_work(10, 3);
         assert_eq!(work, vec![4, 3, 3]); // 10 tests across 3 threads
     }
@@ -1610,13 +1685,17 @@ mod tests {
             work_distribution: WorkDistribution::ChunkBased,
             ..ParallelConfig::default()
         };
-        
+
         let prop = ParallelProperty::new(
             Gen::bool(),
-            |_| TestResult::Pass { tests_run: 1, property_name: None, module_path: None },
+            |_| TestResult::Pass {
+                tests_run: 1,
+                property_name: None,
+                module_path: None,
+            },
             config,
         );
-        
+
         let work = prop.distribute_work(10, 3);
         assert_eq!(work, vec![4, 4, 2]); // Chunks of ~3.33, so 4,4,2
     }
@@ -1633,15 +1712,15 @@ mod tests {
     #[test]
     fn test_basic_parallel_execution() {
         let config = Config::default().with_tests(100);
-        
+
         let prop = for_all_parallel(
             Gen::int_range(1, 100),
             |&n| n > 0 && n <= 100,
-            2 // 2 threads
+            2, // 2 threads
         );
-        
+
         let result = prop.run(&config);
-        
+
         match result.outcome {
             TestResult::Pass { tests_run, .. } => {
                 assert_eq!(tests_run, 100);
@@ -1649,23 +1728,23 @@ mod tests {
                 assert!(result.performance.speedup_factor > 0.0);
                 assert!(result.performance.thread_efficiency > 0.0);
             }
-            other => panic!("Expected pass, got: {:?}", other),
+            other => panic!("Expected pass, got: {other:?}"),
         }
     }
 
     #[test]
     fn test_parallel_failure_detection() {
         let config = Config::default().with_tests(20);
-        
+
         // This should fail when it encounters a number > 50
         let prop = for_all_parallel(
             Gen::int_range(1, 100),
             |&n| n <= 50,
-            3 // 3 threads
+            3, // 3 threads
         );
-        
+
         let result = prop.run(&config);
-        
+
         match result.outcome {
             TestResult::Fail { tests_run, .. } => {
                 assert!(tests_run <= 20);
@@ -1676,7 +1755,7 @@ mod tests {
                 // and don't generate any numbers > 50 in our small sample
                 println!("Test passed (got lucky with random generation)");
             }
-            other => panic!("Expected pass or fail, got: {:?}", other),
+            other => panic!("Expected pass or fail, got: {other:?}"),
         }
     }
 
@@ -1684,7 +1763,7 @@ mod tests {
     fn test_different_work_distributions() {
         let test_sizes = vec![10, 100];
         let thread_counts = vec![1, 2, 4];
-        
+
         for &test_size in &test_sizes {
             for &thread_count in &thread_counts {
                 for distribution in [WorkDistribution::RoundRobin, WorkDistribution::ChunkBased] {
@@ -1693,21 +1772,25 @@ mod tests {
                         work_distribution: distribution,
                         ..ParallelConfig::default()
                     };
-                    
+
                     let prop = ParallelProperty::new(
                         Gen::bool(),
-                        |_| TestResult::Pass { tests_run: 1, property_name: None, module_path: None },
+                        |_| TestResult::Pass {
+                            tests_run: 1,
+                            property_name: None,
+                            module_path: None,
+                        },
                         config,
                     );
-                    
+
                     let work = prop.distribute_work(test_size, thread_count);
-                    
+
                     // Verify work is distributed correctly
                     assert_eq!(work.len(), thread_count);
                     assert_eq!(work.iter().sum::<usize>(), test_size);
-                    
+
                     // No thread should have more than ceiling(test_size/thread_count) work
-                    let max_work = (test_size + thread_count - 1) / thread_count;
+                    let max_work = test_size.div_ceil(thread_count);
                     for &thread_work in &work {
                         assert!(thread_work <= max_work);
                     }
@@ -1720,21 +1803,21 @@ mod tests {
     fn test_single_thread_parallel() {
         // Test that single-threaded "parallel" execution works correctly
         let config = Config::default().with_tests(50);
-        
+
         let prop = for_all_parallel(
             Gen::int_range(1, 10),
-            |&n| n >= 1 && n <= 10,
-            1 // Single thread
+            |&n| (1..=10).contains(&n),
+            1, // Single thread
         );
-        
+
         let result = prop.run(&config);
-        
+
         match result.outcome {
             TestResult::Pass { tests_run, .. } => {
                 assert_eq!(tests_run, 50);
                 assert_eq!(result.thread_results.len(), 1);
             }
-            other => panic!("Expected pass, got: {:?}", other),
+            other => panic!("Expected pass, got: {other:?}"),
         }
     }
 
@@ -1745,15 +1828,19 @@ mod tests {
             work_distribution: WorkDistribution::WorkStealing,
             ..ParallelConfig::default()
         };
-        
+
         let prop = ParallelProperty::new(
             Gen::bool(),
-            |_| TestResult::Pass { tests_run: 1, property_name: None, module_path: None },
+            |_| TestResult::Pass {
+                tests_run: 1,
+                property_name: None,
+                module_path: None,
+            },
             config,
         );
-        
+
         let work = prop.distribute_work(10, 3);
-        
+
         // Should behave like round robin
         assert_eq!(work, vec![4, 3, 3]);
     }
@@ -1761,20 +1848,33 @@ mod tests {
     #[test]
     fn test_performance_metrics_calculation() {
         let thread_results = vec![
-            TestResult::Pass { tests_run: 30, property_name: None, module_path: None },
-            TestResult::Pass { tests_run: 35, property_name: None, module_path: None },
-            TestResult::Pass { tests_run: 35, property_name: None, module_path: None },
+            TestResult::Pass {
+                tests_run: 30,
+                property_name: None,
+                module_path: None,
+            },
+            TestResult::Pass {
+                tests_run: 35,
+                property_name: None,
+                module_path: None,
+            },
+            TestResult::Pass {
+                tests_run: 35,
+                property_name: None,
+                module_path: None,
+            },
         ];
-        
+
         let total_duration = Duration::from_millis(100);
         let thread_count = 3;
-        
-        let metrics = ParallelProperty::<bool, fn(&bool) -> TestResult>::calculate_performance_metrics(
-            total_duration,
-            &thread_results,
-            thread_count,
-        );
-        
+
+        let metrics =
+            ParallelProperty::<bool, fn(&bool) -> TestResult>::calculate_performance_metrics(
+                total_duration,
+                &thread_results,
+                thread_count,
+            );
+
         assert_eq!(metrics.total_duration, total_duration);
         assert!(metrics.speedup_factor > 0.0);
         assert!(metrics.thread_efficiency > 0.0);
@@ -1784,7 +1884,7 @@ mod tests {
     #[test]
     fn test_concurrency_issue_analysis() {
         let mut issues = ConcurrencyIssues::default();
-        
+
         // Test with a failing result (potential race condition)
         let failing_result = TestResult::Fail {
             counterexample: "test".to_string(),
@@ -1795,9 +1895,12 @@ mod tests {
             assertion_type: None,
             shrink_steps: Vec::new(),
         };
-        
-        ParallelProperty::<bool, fn(&bool) -> TestResult>::analyze_thread_result(&failing_result, &mut issues);
-        
+
+        ParallelProperty::<bool, fn(&bool) -> TestResult>::analyze_thread_result(
+            &failing_result,
+            &mut issues,
+        );
+
         assert_eq!(issues.non_deterministic_results, 1);
         assert_eq!(issues.potential_deadlocks, 0);
         assert_eq!(issues.timeouts, 0);
@@ -1808,23 +1911,40 @@ mod tests {
     fn test_result_aggregation() {
         // Test with all passing results
         let passing_results = vec![
-            TestResult::Pass { tests_run: 20, property_name: None, module_path: None },
-            TestResult::Pass { tests_run: 25, property_name: None, module_path: None },
-            TestResult::Pass { tests_run: 30, property_name: None, module_path: None },
+            TestResult::Pass {
+                tests_run: 20,
+                property_name: None,
+                module_path: None,
+            },
+            TestResult::Pass {
+                tests_run: 25,
+                property_name: None,
+                module_path: None,
+            },
+            TestResult::Pass {
+                tests_run: 30,
+                property_name: None,
+                module_path: None,
+            },
         ];
-        
-        let aggregated = ParallelProperty::<bool, fn(&bool) -> TestResult>::aggregate_results(&passing_results);
-        
+
+        let aggregated =
+            ParallelProperty::<bool, fn(&bool) -> TestResult>::aggregate_results(&passing_results);
+
         match aggregated {
             TestResult::Pass { tests_run, .. } => {
                 assert_eq!(tests_run, 75); // Sum of all tests
             }
-            other => panic!("Expected pass, got: {:?}", other),
+            other => panic!("Expected pass, got: {other:?}"),
         }
-        
+
         // Test with one failing result
         let mixed_results = vec![
-            TestResult::Pass { tests_run: 20, property_name: None, module_path: None },
+            TestResult::Pass {
+                tests_run: 20,
+                property_name: None,
+                module_path: None,
+            },
             TestResult::Fail {
                 counterexample: "failure".to_string(),
                 tests_run: 15,
@@ -1834,16 +1954,21 @@ mod tests {
                 assertion_type: None,
                 shrink_steps: Vec::new(),
             },
-            TestResult::Pass { tests_run: 30, property_name: None, module_path: None },
+            TestResult::Pass {
+                tests_run: 30,
+                property_name: None,
+                module_path: None,
+            },
         ];
-        
-        let aggregated = ParallelProperty::<bool, fn(&bool) -> TestResult>::aggregate_results(&mixed_results);
-        
+
+        let aggregated =
+            ParallelProperty::<bool, fn(&bool) -> TestResult>::aggregate_results(&mixed_results);
+
         match aggregated {
             TestResult::Fail { counterexample, .. } => {
                 assert_eq!(counterexample, "failure");
             }
-            other => panic!("Expected failure, got: {:?}", other),
+            other => panic!("Expected failure, got: {other:?}"),
         }
     }
 
@@ -1852,14 +1977,14 @@ mod tests {
         let prop = for_all_concurrent(
             Gen::int_range(1, 10),
             |&n| n > 0 && n <= 10,
-            4 // 4 threads
+            4, // 4 threads
         );
-        
+
         let results = prop.run(&Config::default().with_tests(5));
-        
+
         // Should have 5 concurrent test results (one for each input)
         assert_eq!(results.len(), 5);
-        
+
         // Each result should have been tested by 4 threads
         for result in &results {
             assert_eq!(result.results.len(), 4);
@@ -1873,10 +1998,10 @@ mod tests {
     fn test_concurrent_determinism_detection() {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
-        
+
         // Create a test that has non-deterministic behavior
         let flip_flop = Arc::new(AtomicBool::new(false));
-        
+
         let prop = ConcurrentProperty::new(
             Gen::unit(), // We don't need varied input for this test
             {
@@ -1885,7 +2010,7 @@ mod tests {
                     // This creates non-deterministic behavior
                     let current = flip_flop.load(Ordering::SeqCst);
                     flip_flop.store(!current, Ordering::SeqCst);
-                    
+
                     if current {
                         TestResult::Pass {
                             tests_run: 1,
@@ -1905,37 +2030,43 @@ mod tests {
                     }
                 }
             },
-            4 // 4 threads
+            4, // 4 threads
         );
-        
+
         let results = prop.run(&Config::default().with_tests(3));
-        
+
         // Should detect non-deterministic behavior
-        let non_deterministic_count = results.iter()
-            .filter(|r| !r.deterministic)
-            .count();
-            
+        let non_deterministic_count = results.iter().filter(|r| !r.deterministic).count();
+
         // Should find at least some non-deterministic results
-        assert!(non_deterministic_count > 0, "Should detect non-deterministic behavior");
+        assert!(
+            non_deterministic_count > 0,
+            "Should detect non-deterministic behavior"
+        );
     }
 
-    #[test] 
+    #[test]
     fn test_concurrent_property_with_variable_name() {
         let prop = for_all_concurrent(
             Gen::int_range(1, 5),
             |&n| n > 0,
-            2 // 2 threads
-        ).with_variable_name("test_value");
-        
+            2, // 2 threads
+        )
+        .with_variable_name("test_value");
+
         let results = prop.run(&Config::default().with_tests(2));
-        
+
         assert_eq!(results.len(), 2);
         // Variable name should be preserved in thread results
         for result in &results {
             if !result.results.is_empty() {
                 // Check if any results have the variable name (depends on test outcome)
                 for thread_result in &result.results {
-                    if let TestResult::Fail { property_name: Some(name), .. } = thread_result {
+                    if let TestResult::Fail {
+                        property_name: Some(name),
+                        ..
+                    } = thread_result
+                    {
                         assert_eq!(name, "test_value");
                     }
                 }
@@ -1946,10 +2077,10 @@ mod tests {
     #[test]
     fn test_concurrent_result_type_analysis() {
         // Test the result type analysis
-        let pass_result = TestResult::Pass { 
-            tests_run: 1, 
-            property_name: None, 
-            module_path: None 
+        let pass_result = TestResult::Pass {
+            tests_run: 1,
+            property_name: None,
+            module_path: None,
         };
         let fail_result = TestResult::Fail {
             counterexample: "test".to_string(),
@@ -1960,19 +2091,25 @@ mod tests {
             assertion_type: None,
             shrink_steps: Vec::new(),
         };
-        
-        assert_eq!(ConcurrentProperty::<(), fn(&()) -> TestResult>::result_type(&pass_result), "pass");
-        assert_eq!(ConcurrentProperty::<(), fn(&()) -> TestResult>::result_type(&fail_result), "fail");
+
+        assert_eq!(
+            ConcurrentProperty::<(), fn(&()) -> TestResult>::result_type(&pass_result),
+            "pass"
+        );
+        assert_eq!(
+            ConcurrentProperty::<(), fn(&()) -> TestResult>::result_type(&fail_result),
+            "fail"
+        );
     }
 
     #[test]
     fn test_deadlock_detection_with_timeout() {
         use std::sync::{Arc, Mutex};
-        
+
         // Create a test that will cause deadlock by having threads wait on each other
         let mutex1 = Arc::new(Mutex::new(0));
         let mutex2 = Arc::new(Mutex::new(0));
-        
+
         let prop = ConcurrentProperty::new(
             Gen::unit(),
             {
@@ -1983,7 +2120,7 @@ mod tests {
                     let _guard1 = m1.lock().unwrap();
                     thread::sleep(Duration::from_millis(50)); // Hold lock and wait
                     let _guard2 = m2.try_lock(); // Try to get second lock
-                    
+
                     TestResult::Pass {
                         tests_run: 1,
                         property_name: None,
@@ -1991,28 +2128,31 @@ mod tests {
                     }
                 }
             },
-            3 // 3 threads competing for locks
-        ).with_timeout(Duration::from_millis(100)); // Short timeout
-        
+            3, // 3 threads competing for locks
+        )
+        .with_timeout(Duration::from_millis(100)); // Short timeout
+
         let results = prop.run(&Config::default().with_tests(1));
-        
+
         // Should have 1 result
         assert_eq!(results.len(), 1);
-        
+
         let result = &results[0];
-        
+
         // Should detect either timeout or non-deterministic behavior
-        assert!(result.timeout_detected || !result.deterministic || result.race_conditions_detected > 0,
-                "Should detect concurrency issues (timeout, non-deterministic, or race conditions)");
+        assert!(
+            result.timeout_detected || !result.deterministic || result.race_conditions_detected > 0,
+            "Should detect concurrency issues (timeout, non-deterministic, or race conditions)"
+        );
     }
 
     #[test]
     fn test_deadlock_info_generation() {
         use std::sync::{Arc, Mutex};
-        
+
         // Create a mutex that will cause long delays
         let slow_mutex = Arc::new(Mutex::new(0));
-        
+
         let prop = ConcurrentProperty::new(
             Gen::constant(42),
             {
@@ -2021,30 +2161,40 @@ mod tests {
                     let _guard = mutex.lock().unwrap();
                     // Simulate very slow operation that will timeout
                     thread::sleep(Duration::from_millis(200));
-                    
+
                     TestResult::Pass {
                         tests_run: 1,
-                        property_name: Some(format!("slow_test_{}", input)),
+                        property_name: Some(format!("slow_test_{input}")),
                         module_path: None,
                     }
                 }
             },
-            2 // 2 threads competing for the mutex
-        ).with_timeout(Duration::from_millis(50)); // Very short timeout
-        
+            2, // 2 threads competing for the mutex
+        )
+        .with_timeout(Duration::from_millis(50)); // Very short timeout
+
         let results = prop.run(&Config::default().with_tests(1));
-        
+
         assert_eq!(results.len(), 1);
         let result = &results[0];
-        
+
         // Should detect timeout
         assert!(result.timeout_detected, "Should detect timeout");
-        
+
         // Should have deadlock info
         if let Some(deadlock_info) = &result.deadlock_info {
-            assert!(deadlock_info.input.contains("42"), "Deadlock info should contain input value");
-            assert!(!deadlock_info.threads_involved.is_empty(), "Should have threads involved");
-            assert!(deadlock_info.timeout_duration >= Duration::from_millis(50), "Should record timeout duration");
+            assert!(
+                deadlock_info.input.contains("42"),
+                "Deadlock info should contain input value"
+            );
+            assert!(
+                !deadlock_info.threads_involved.is_empty(),
+                "Should have threads involved"
+            );
+            assert!(
+                deadlock_info.timeout_duration >= Duration::from_millis(50),
+                "Should record timeout duration"
+            );
         } else {
             panic!("Should have deadlock info when timeout is detected");
         }
@@ -2056,10 +2206,14 @@ mod tests {
         let scenario = concurrent_scenario("test_scenario")
             .operation("op1", |n: &i32| {
                 if *n > 0 {
-                    TestResult::Pass { tests_run: 1, property_name: None, module_path: None }
+                    TestResult::Pass {
+                        tests_run: 1,
+                        property_name: None,
+                        module_path: None,
+                    }
                 } else {
                     TestResult::Fail {
-                        counterexample: format!("{}", n),
+                        counterexample: format!("{n}"),
                         tests_run: 1,
                         shrinks_performed: 0,
                         property_name: None,
@@ -2069,12 +2223,10 @@ mod tests {
                     }
                 }
             })
-            .operation("op2", |n: &i32| {
-                TestResult::Pass { 
-                    tests_run: 1, 
-                    property_name: Some(format!("op2_{}", n)),
-                    module_path: None 
-                }
+            .operation("op2", |n: &i32| TestResult::Pass {
+                tests_run: 1,
+                property_name: Some(format!("op2_{n}")),
+                module_path: None,
             })
             .before("op1", "op2")
             .build();
@@ -2082,11 +2234,11 @@ mod tests {
         assert_eq!(scenario.name, "test_scenario");
         assert_eq!(scenario.operations.len(), 2);
         assert_eq!(scenario.constraints.len(), 1);
-        
+
         // Check operation IDs
         assert_eq!(scenario.operations[0].id, "op1");
         assert_eq!(scenario.operations[1].id, "op2");
-        
+
         // Check constraint
         match &scenario.constraints[0] {
             InterleavingConstraint::Before { before, after } => {
@@ -2100,24 +2252,22 @@ mod tests {
     #[test]
     fn test_scenario_execution() {
         let scenario = concurrent_scenario("simple_test")
-            .operation("increment", |_n: &i32| {
-                TestResult::Pass { 
-                    tests_run: 1, 
-                    property_name: Some("increment".to_string()),
-                    module_path: None 
-                }
+            .operation("increment", |_n: &i32| TestResult::Pass {
+                tests_run: 1,
+                property_name: Some("increment".to_string()),
+                module_path: None,
             })
             .operation("double", |n: &i32| {
                 let doubled = n * 2;
                 if doubled > *n {
-                    TestResult::Pass { 
-                        tests_run: 1, 
+                    TestResult::Pass {
+                        tests_run: 1,
                         property_name: Some("double".to_string()),
-                        module_path: None 
+                        module_path: None,
                     }
                 } else {
                     TestResult::Fail {
-                        counterexample: format!("Doubling {} failed", n),
+                        counterexample: format!("Doubling {n} failed"),
                         tests_run: 1,
                         shrinks_performed: 0,
                         property_name: Some("double".to_string()),
@@ -2130,20 +2280,20 @@ mod tests {
             .build();
 
         let result = scenario.execute(&5);
-        
+
         assert_eq!(result.scenario_name, "simple_test");
         assert_eq!(result.operation_results.len(), 2);
         assert!(result.operation_results.contains_key("increment"));
         assert!(result.operation_results.contains_key("double"));
-        
+
         // Both operations should pass
         match result.operation_results.get("increment").unwrap() {
-            TestResult::Pass { .. } => {},
+            TestResult::Pass { .. } => {}
             _ => panic!("increment should pass"),
         }
-        
+
         match result.operation_results.get("double").unwrap() {
-            TestResult::Pass { .. } => {},
+            TestResult::Pass { .. } => {}
             _ => panic!("double should pass"),
         }
     }
@@ -2151,62 +2301,65 @@ mod tests {
     #[test]
     fn test_scenario_with_dependencies() {
         let scenario = concurrent_scenario("dependency_test")
-            .operation("setup", |_: &i32| {
-                TestResult::Pass { 
-                    tests_run: 1, 
-                    property_name: Some("setup".to_string()),
-                    module_path: None 
-                }
+            .operation("setup", |_: &i32| TestResult::Pass {
+                tests_run: 1,
+                property_name: Some("setup".to_string()),
+                module_path: None,
             })
-            .operation_depends_on("main", vec!["setup"], |n: &i32| {
-                TestResult::Pass { 
-                    tests_run: 1, 
-                    property_name: Some(format!("main_{}", n)),
-                    module_path: None 
-                }
+            .operation_depends_on("main", vec!["setup"], |n: &i32| TestResult::Pass {
+                tests_run: 1,
+                property_name: Some(format!("main_{n}")),
+                module_path: None,
             })
-            .operation_depends_on("cleanup", vec!["main"], |_: &i32| {
-                TestResult::Pass { 
-                    tests_run: 1, 
-                    property_name: Some("cleanup".to_string()),
-                    module_path: None 
-                }
+            .operation_depends_on("cleanup", vec!["main"], |_: &i32| TestResult::Pass {
+                tests_run: 1,
+                property_name: Some("cleanup".to_string()),
+                module_path: None,
             })
             .build();
 
         assert_eq!(scenario.operations.len(), 3);
-        
+
         // Check dependencies
-        let main_op = scenario.operations.iter().find(|op| op.id == "main").unwrap();
+        let main_op = scenario
+            .operations
+            .iter()
+            .find(|op| op.id == "main")
+            .unwrap();
         assert_eq!(main_op.depends_on, vec!["setup"]);
-        
-        let cleanup_op = scenario.operations.iter().find(|op| op.id == "cleanup").unwrap();
+
+        let cleanup_op = scenario
+            .operations
+            .iter()
+            .find(|op| op.id == "cleanup")
+            .unwrap();
         assert_eq!(cleanup_op.depends_on, vec!["main"]);
-        
+
         let result = scenario.execute(&10);
         assert_eq!(result.operation_results.len(), 3);
     }
 
     #[test]
     fn test_interleaving_explorer_creation() {
-        let explorer = interleaving_explorer(
-            Gen::int_range(1, 100),
-            |&n| {
-                if n > 50 {
-                    TestResult::Pass { tests_run: 1, property_name: None, module_path: None }
-                } else {
-                    TestResult::Fail {
-                        counterexample: format!("{}", n),
-                        tests_run: 1,
-                        shrinks_performed: 0,
-                        property_name: None,
-                        module_path: None,
-                        assertion_type: None,
-                        shrink_steps: Vec::new(),
-                    }
+        let explorer = interleaving_explorer(Gen::int_range(1, 100), |&n| {
+            if n > 50 {
+                TestResult::Pass {
+                    tests_run: 1,
+                    property_name: None,
+                    module_path: None,
+                }
+            } else {
+                TestResult::Fail {
+                    counterexample: format!("{n}"),
+                    tests_run: 1,
+                    shrinks_performed: 0,
+                    property_name: None,
+                    module_path: None,
+                    assertion_type: None,
+                    shrink_steps: Vec::new(),
                 }
             }
-        );
+        });
 
         assert_eq!(explorer.operation_count, 3);
         assert_eq!(explorer.max_interleavings, 50);
@@ -2215,11 +2368,14 @@ mod tests {
 
     #[test]
     fn test_interleaving_explorer_configuration() {
-        let explorer = interleaving_explorer(
-            Gen::bool(),
-            |&b| if b { 
-                TestResult::Pass { tests_run: 1, property_name: None, module_path: None }
-            } else { 
+        let explorer = interleaving_explorer(Gen::bool(), |&b| {
+            if b {
+                TestResult::Pass {
+                    tests_run: 1,
+                    property_name: None,
+                    module_path: None,
+                }
+            } else {
                 TestResult::Fail {
                     counterexample: "false".to_string(),
                     tests_run: 1,
@@ -2230,7 +2386,7 @@ mod tests {
                     shrink_steps: Vec::new(),
                 }
             }
-        )
+        })
         .with_operations(5)
         .with_max_interleavings(20)
         .with_timeout(Duration::from_millis(500));
@@ -2240,36 +2396,41 @@ mod tests {
         assert_eq!(explorer.timeout, Some(Duration::from_millis(500)));
     }
 
-    #[test]  
+    #[test]
     fn test_interleaving_explorer_basic_run() {
-        let explorer = interleaving_explorer(
-            Gen::constant(42),
-            |&n| {
-                // Simple deterministic test
-                if n == 42 {
-                    TestResult::Pass { tests_run: 1, property_name: None, module_path: None }
-                } else {
-                    TestResult::Fail {
-                        counterexample: format!("Expected 42, got {}", n),
-                        tests_run: 1,
-                        shrinks_performed: 0,
-                        property_name: None,
-                        module_path: None,
-                        assertion_type: None,
-                        shrink_steps: Vec::new(),
-                    }
+        let explorer = interleaving_explorer(Gen::constant(42), |&n| {
+            // Simple deterministic test
+            if n == 42 {
+                TestResult::Pass {
+                    tests_run: 1,
+                    property_name: None,
+                    module_path: None,
+                }
+            } else {
+                TestResult::Fail {
+                    counterexample: format!("Expected 42, got {n}"),
+                    tests_run: 1,
+                    shrinks_performed: 0,
+                    property_name: None,
+                    module_path: None,
+                    assertion_type: None,
+                    shrink_steps: Vec::new(),
                 }
             }
-        ).with_max_interleavings(10);
+        })
+        .with_max_interleavings(10);
 
         let results = explorer.explore(&Config::default().with_tests(2));
-        
+
         assert_eq!(results.len(), 2);
-        
+
         for result in &results {
             assert_eq!(result.interleavings_explored, 10);
             // For a deterministic test, should not detect race conditions
-            assert!(result.deterministic, "Deterministic test should not have race conditions");
+            assert!(
+                result.deterministic,
+                "Deterministic test should not have race conditions"
+            );
             assert_eq!(result.race_conditions_detected, 0);
         }
     }
@@ -2277,50 +2438,52 @@ mod tests {
     #[test]
     fn test_interleaving_pattern_structure() {
         use std::sync::atomic::{AtomicBool, Ordering};
-        
+
         // Test with intentionally non-deterministic behavior
         let flip = Arc::new(AtomicBool::new(false));
-        
-        let explorer = interleaving_explorer(
-            Gen::unit(),
-            {
-                let flip = Arc::clone(&flip);
-                move |_| {
-                    let current = flip.load(Ordering::SeqCst);
-                    flip.store(!current, Ordering::SeqCst);
-                    
-                    if current {
-                        TestResult::Pass { tests_run: 1, property_name: None, module_path: None }
-                    } else {
-                        TestResult::Fail {
-                            counterexample: "flipped to false".to_string(),
-                            tests_run: 1,
-                            shrinks_performed: 0,
-                            property_name: None,
-                            module_path: None,
-                            assertion_type: Some("Non-deterministic".to_string()),
-                            shrink_steps: Vec::new(),
-                        }
+
+        let explorer = interleaving_explorer(Gen::unit(), {
+            let flip = Arc::clone(&flip);
+            move |_| {
+                let current = flip.load(Ordering::SeqCst);
+                flip.store(!current, Ordering::SeqCst);
+
+                if current {
+                    TestResult::Pass {
+                        tests_run: 1,
+                        property_name: None,
+                        module_path: None,
+                    }
+                } else {
+                    TestResult::Fail {
+                        counterexample: "flipped to false".to_string(),
+                        tests_run: 1,
+                        shrinks_performed: 0,
+                        property_name: None,
+                        module_path: None,
+                        assertion_type: Some("Non-deterministic".to_string()),
+                        shrink_steps: Vec::new(),
                     }
                 }
             }
-        ).with_max_interleavings(20);
+        })
+        .with_max_interleavings(20);
 
         let results = explorer.explore(&Config::default().with_tests(1));
-        
+
         assert_eq!(results.len(), 1);
         let result = &results[0];
-        
+
         // Should potentially detect non-determinism
         if !result.deterministic {
             assert!(result.race_conditions_detected > 0);
             assert!(!result.failing_patterns.is_empty());
-            
+
             // Check pattern structure
             let pattern = &result.failing_patterns[0];
             assert!(!pattern.sequence.is_empty());
             assert!(!pattern.threads_involved.is_empty());
-            
+
             // Should have thread operations
             for op in &pattern.sequence {
                 assert!(op.thread_id < explorer.operation_count);
@@ -2332,7 +2495,7 @@ mod tests {
     #[test]
     fn test_load_test_config_defaults() {
         let config = LoadTestConfig::default();
-        
+
         assert!(config.thread_count > 0);
         assert!(config.duration > Duration::from_secs(0));
         assert!(config.ramp_up_duration >= Duration::from_secs(0));
@@ -2350,15 +2513,19 @@ mod tests {
             cool_down_duration: Duration::from_millis(10),
             collect_stats: true,
         };
-        
+
         let generator = LoadGenerator::new(
             Gen::int_range(1, 100),
             |&n| {
                 if n > 0 {
-                    TestResult::Pass { tests_run: 1, property_name: None, module_path: None }
+                    TestResult::Pass {
+                        tests_run: 1,
+                        property_name: None,
+                        module_path: None,
+                    }
                 } else {
                     TestResult::Fail {
-                        counterexample: format!("{}", n),
+                        counterexample: format!("{n}"),
                         tests_run: 1,
                         shrinks_performed: 0,
                         property_name: None,
@@ -2370,7 +2537,7 @@ mod tests {
             },
             config.clone(),
         );
-        
+
         assert_eq!(generator.config.thread_count, 2);
         assert_eq!(generator.config.duration, Duration::from_millis(100));
         assert_eq!(generator.config.ops_per_second, Some(10));
@@ -2386,37 +2553,50 @@ mod tests {
             cool_down_duration: Duration::from_millis(5),
             collect_stats: true,
         };
-        
+
         let generator = LoadGenerator::new(
             Gen::constant(42),
             |&n| {
                 // Simple test that should always pass
-                TestResult::Pass { 
-                    tests_run: 1, 
-                    property_name: Some(format!("test_{}", n)),
-                    module_path: None 
+                TestResult::Pass {
+                    tests_run: 1,
+                    property_name: Some(format!("test_{n}")),
+                    module_path: None,
                 }
             },
             config,
         );
-        
+
         let result = generator.run_load_test();
-        
+
         // Check basic result structure
         assert_eq!(result.config.thread_count, 2);
-        assert!(result.stats.operations_completed > 0, "Should complete some operations");
-        assert_eq!(result.stats.operations_failed, 0, "All operations should pass");
+        assert!(
+            result.stats.operations_completed > 0,
+            "Should complete some operations"
+        );
+        assert_eq!(
+            result.stats.operations_failed, 0,
+            "All operations should pass"
+        );
         assert!(result.success_rate >= 0.95, "Success rate should be high");
-        assert!(result.stats.avg_ops_per_second > 0.0, "Should have positive ops/sec");
-        
+        assert!(
+            result.stats.avg_ops_per_second > 0.0,
+            "Should have positive ops/sec"
+        );
+
         // Check phase timings
         assert!(result.phase_timings.total_time >= Duration::from_millis(100));
         assert!(result.phase_timings.ramp_up_time >= Duration::from_millis(0));
         assert!(result.phase_timings.steady_state_time >= Duration::from_millis(90));
-        
+
         // Check thread results
-        assert_eq!(result.thread_results.len(), 2, "Should have results from 2 threads");
-        
+        assert_eq!(
+            result.thread_results.len(),
+            2,
+            "Should have results from 2 threads"
+        );
+
         for thread_result in &result.thread_results {
             match thread_result {
                 TestResult::Pass { tests_run, .. } => {
@@ -2437,14 +2617,14 @@ mod tests {
             cool_down_duration: Duration::from_millis(2),
             collect_stats: true,
         };
-        
+
         let generator = LoadGenerator::new(
             Gen::int_range(1, 10),
             |&n| {
                 // Test that fails for even numbers
                 if n % 2 == 0 {
                     TestResult::Fail {
-                        counterexample: format!("Even number: {}", n),
+                        counterexample: format!("Even number: {n}"),
                         tests_run: 1,
                         shrinks_performed: 0,
                         property_name: Some("even_test".to_string()),
@@ -2453,18 +2633,18 @@ mod tests {
                         shrink_steps: Vec::new(),
                     }
                 } else {
-                    TestResult::Pass { 
-                        tests_run: 1, 
+                    TestResult::Pass {
+                        tests_run: 1,
                         property_name: Some("odd_test".to_string()),
-                        module_path: None 
+                        module_path: None,
                     }
                 }
             },
             config,
         );
-        
+
         let result = generator.run_load_test();
-        
+
         // Should have both passing and failing operations
         assert!(result.stats.operations_completed > 0);
         // Success rate should be less than 100% due to even number failures
@@ -2475,9 +2655,9 @@ mod tests {
     #[test]
     fn test_load_test_response_time_stats() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        
+
         let counter = Arc::new(AtomicUsize::new(0));
-        
+
         let config = LoadTestConfig {
             thread_count: 1,
             duration: Duration::from_millis(50),
@@ -2486,7 +2666,7 @@ mod tests {
             cool_down_duration: Duration::from_millis(2),
             collect_stats: true,
         };
-        
+
         let generator = LoadGenerator::new(
             Gen::unit(),
             {
@@ -2495,28 +2675,43 @@ mod tests {
                     counter.fetch_add(1, Ordering::SeqCst);
                     // Add a small delay to create measurable response times
                     thread::sleep(Duration::from_micros(10));
-                    TestResult::Pass { tests_run: 1, property_name: None, module_path: None }
+                    TestResult::Pass {
+                        tests_run: 1,
+                        property_name: None,
+                        module_path: None,
+                    }
                 }
             },
             config,
         );
-        
+
         let result = generator.run_load_test();
-        
+
         // Check response time statistics
-        assert!(result.stats.avg_response_time > Duration::from_micros(5), 
-                "Average response time should reflect the sleep");
-        assert!(result.stats.max_response_time >= result.stats.avg_response_time,
-                "Max response time should be >= average");
-        assert!(result.stats.p95_response_time >= Duration::from_micros(5),
-                "P95 should reflect the sleep time");
-        
+        assert!(
+            result.stats.avg_response_time > Duration::from_micros(5),
+            "Average response time should reflect the sleep"
+        );
+        assert!(
+            result.stats.max_response_time >= result.stats.avg_response_time,
+            "Max response time should be >= average"
+        );
+        assert!(
+            result.stats.p95_response_time >= Duration::from_micros(5),
+            "P95 should reflect the sleep time"
+        );
+
         // Check that we collected response times
-        assert!(!result.stats.response_times.is_empty(), "Should collect response times");
-        
+        assert!(
+            !result.stats.response_times.is_empty(),
+            "Should collect response times"
+        );
+
         // Verify counter was incremented
         let final_count = counter.load(Ordering::SeqCst);
-        assert_eq!(final_count, result.stats.operations_completed, 
-                  "Counter should match operations completed");
+        assert_eq!(
+            final_count, result.stats.operations_completed,
+            "Counter should match operations completed"
+        );
     }
 }

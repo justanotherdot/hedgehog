@@ -10,33 +10,31 @@ fn main() {
     println!("Testing vector generators");
     let vec_gen = Gen::<Vec<i32>>::vec_of(Gen::int_range(-10, 10));
     let vec_prop = for_all(vec_gen, |v: &Vec<i32>| {
-        v.iter().all(|&x| x >= -10 && x <= 10)
+        v.iter().all(|&x| (-10..=10).contains(&x))
     });
     match vec_prop.run(&Config::default().with_tests(50)) {
         TestResult::Pass { .. } => println!("Vector bounds property passed"),
-        result => println!("Vector bounds property failed: {:?}", result),
+        result => println!("Vector bounds property failed: {result:?}"),
     }
 
     // Test vector integer convenience method
     println!("Testing vec_int convenience method");
     let vec_int_gen = Gen::<Vec<i32>>::vec_int();
     let vec_int_prop = for_all(vec_int_gen, |v: &Vec<i32>| {
-        v.iter().all(|&x| x >= -100 && x <= 100)
+        v.iter().all(|&x| (-100..=100).contains(&x))
     });
     match vec_int_prop.run(&Config::default().with_tests(50)) {
         TestResult::Pass { .. } => println!("Vec<i32> convenience property passed"),
-        result => println!("Vec<i32> convenience property failed: {:?}", result),
+        result => println!("Vec<i32> convenience property failed: {result:?}"),
     }
 
     // Test vector boolean convenience method
     println!("Testing vec_bool convenience method");
     let vec_bool_gen = Gen::<Vec<bool>>::vec_bool();
-    let vec_bool_prop = for_all(vec_bool_gen, |v: &Vec<bool>| {
-        v.iter().all(|&b| b == true || b == false)
-    });
+    let vec_bool_prop = for_all(vec_bool_gen, |v: &Vec<bool>| v.iter().all(|&b| b || !b));
     match vec_bool_prop.run(&Config::default().with_tests(50)) {
         TestResult::Pass { .. } => println!("Vec<bool> convenience property passed"),
-        result => println!("Vec<bool> convenience property failed: {:?}", result),
+        result => println!("Vec<bool> convenience property failed: {result:?}"),
     }
     println!();
 
@@ -49,7 +47,7 @@ fn main() {
     });
     match option_prop.run(&Config::default().with_tests(50)) {
         TestResult::Pass { .. } => println!("Option<i32> bounds property passed"),
-        result => println!("Option<i32> bounds property failed: {:?}", result),
+        result => println!("Option<i32> bounds property failed: {result:?}"),
     }
 
     // Test that option generators produce both Some and None
@@ -61,7 +59,7 @@ fn main() {
     match option_some_prop.run(&Config::default().with_tests(100)) {
         TestResult::Fail { .. } => println!("Option produces None values (expected failure)"),
         TestResult::Pass { .. } => println!("WARNING: Option generator only produced Some values"),
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
     println!();
 
@@ -69,11 +67,11 @@ fn main() {
     println!("Testing tuple generators");
     let tuple_gen = Gen::<(i32, bool)>::tuple_of(Gen::int_range(-50, 50), Gen::bool());
     let tuple_prop = for_all(tuple_gen, |(x, b): &(i32, bool)| {
-        *x >= -50 && *x <= 50 && (*b == true || *b == false)
+        *x >= -50 && *x <= 50 && (*b || !(*b))
     });
     match tuple_prop.run(&Config::default().with_tests(50)) {
         TestResult::Pass { .. } => println!("Tuple (i32, bool) property passed"),
-        result => println!("Tuple (i32, bool) property failed: {:?}", result),
+        result => println!("Tuple (i32, bool) property failed: {result:?}"),
     }
 
     // Test nested structures
@@ -89,7 +87,7 @@ fn main() {
     });
     match nested_prop.run(&Config::default().with_tests(30)) {
         TestResult::Pass { .. } => println!("Nested Vec<Option<String>> property passed"),
-        result => println!("Nested Vec<Option<String>> property failed: {:?}", result),
+        result => println!("Nested Vec<Option<String>> property failed: {result:?}"),
     }
 
     // Test tuple with vectors
@@ -99,15 +97,12 @@ fn main() {
         Gen::<String>::ascii_alphanumeric(),
     );
     let complex_tuple_prop = for_all(complex_tuple_gen, |(vec, string): &(Vec<i32>, String)| {
-        vec.iter().all(|&x| x >= -100 && x <= 100)
+        vec.iter().all(|&x| (-100..=100).contains(&x))
             && string.chars().all(|c| c.is_ascii_alphanumeric())
     });
     match complex_tuple_prop.run(&Config::default().with_tests(30)) {
         TestResult::Pass { .. } => println!("Complex tuple (Vec<i32>, String) property passed"),
-        result => println!(
-            "Complex tuple (Vec<i32>, String) property failed: {:?}",
-            result
-        ),
+        result => println!("Complex tuple (Vec<i32>, String) property failed: {result:?}"),
     }
 
     // Test Result generators
@@ -122,7 +117,7 @@ fn main() {
     });
     match result_prop.run(&Config::default().with_tests(50)) {
         TestResult::Pass { .. } => println!("Result<i32, String> property passed"),
-        result => println!("Result<i32, String> property failed: {:?}", result),
+        result => println!("Result<i32, String> property failed: {result:?}"),
     }
 
     // Test that Result generators produce both Ok and Err
@@ -135,7 +130,7 @@ fn main() {
     match result_ok_prop.run(&Config::default().with_tests(100)) {
         TestResult::Fail { .. } => println!("Result produces Err values (expected failure)"),
         TestResult::Pass { .. } => println!("WARNING: Result generator only produced Ok values"),
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
 
     // Test weighted Result generator
@@ -156,7 +151,7 @@ fn main() {
     );
     match weighted_result_prop.run(&Config::default().with_tests(30)) {
         TestResult::Pass { .. } => println!("Weighted Result generator property passed"),
-        result => println!("Weighted Result generator property failed: {:?}", result),
+        result => println!("Weighted Result generator property failed: {result:?}"),
     }
 
     println!();

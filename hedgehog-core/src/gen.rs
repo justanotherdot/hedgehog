@@ -10,25 +10,31 @@ where
     // For small values, subtraction should be safe
     // This is a heuristic - for i32::MIN - 0, we know it will overflow
     // For normal values like 8 - 0, it's safe
-    
+
     // The exact overflow detection depends on the type, but for our purposes,
     // we can use a simple heuristic: if both values are "reasonable" sized,
     // the subtraction should be safe.
-    
+
     // A very basic approach: try the subtraction and catch panics
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a - b)).ok()
 }
 
 fn towards<T>(destination: T, x: T) -> Vec<T>
 where
-    T: Copy + PartialEq + PartialOrd + std::ops::Sub<Output = T> + std::ops::Add<Output = T> + std::ops::Div<Output = T> + From<u8>,
+    T: Copy
+        + PartialEq
+        + PartialOrd
+        + std::ops::Sub<Output = T>
+        + std::ops::Add<Output = T>
+        + std::ops::Div<Output = T>
+        + From<u8>,
 {
     if destination == x {
         return Vec::new();
     }
 
     let mut result = vec![destination];
-    
+
     // Try to calculate the actual difference, but fall back to a safe value if overflow would occur
     let diff = if x > destination {
         // Check if we can safely subtract
@@ -37,25 +43,23 @@ where
         } else {
             T::from(64) // Safe fallback for extreme values
         }
+    } else if let Some(safe_diff) = try_safe_subtract(destination, x) {
+        safe_diff
     } else {
-        if let Some(safe_diff) = try_safe_subtract(destination, x) {
-            safe_diff
-        } else {
-            T::from(64) // Safe fallback
-        }
+        T::from(64) // Safe fallback
     };
-    
+
     let mut current = diff;
     let zero = T::from(0);
     let two = T::from(2);
-    
+
     while current != zero {
         // Avoid overflow in shrink calculations
         let shrink = if x > destination {
             // Moving towards destination by subtracting current
             // But avoid overflow when x is very negative
             if current > x {
-                destination  // Just go to destination if current is too large
+                destination // Just go to destination if current is too large
             } else {
                 x - current
             }
@@ -64,19 +68,20 @@ where
             // But avoid overflow when x + current would exceed max
             // For signed integers, this can overflow too
             let maybe_shrink = x + current;
-            if maybe_shrink < x {  // Overflow occurred (for signed types)
+            if maybe_shrink < x {
+                // Overflow occurred (for signed types)
                 destination
             } else {
                 maybe_shrink
             }
         };
-        
+
         if shrink != x && shrink != destination {
             result.push(shrink);
         }
         current = current / two;
     }
-    
+
     result
 }
 
@@ -90,30 +95,30 @@ fn removes<T: Clone>(k: usize, xs: &[T]) -> Vec<Vec<T>> {
     if xs.len() == k {
         return vec![Vec::new()];
     }
-    
+
     let mut result = Vec::new();
     let tail = &xs[k..];
     result.push(tail.to_vec());
-    
+
     for smaller in removes(k, &xs[1..]) {
         let mut combined = vec![xs[0].clone()];
         combined.extend(smaller);
         result.push(combined);
     }
-    
+
     result
 }
 
 fn list_shrinks<T: Clone>(xs: &[T]) -> Vec<Vec<T>> {
     let mut result = Vec::new();
     let len = xs.len();
-    
+
     let mut current = len;
     while current != 0 {
         result.extend(removes(current, xs));
         current /= 2;
     }
-    
+
     result
 }
 
@@ -216,7 +221,7 @@ impl<T> Gen<T> {
     {
         Gen::new(move |_size, _seed| Tree::singleton(value.clone()))
     }
-    
+
     /// Generate a sample value with default parameters.
     /// This is a convenience method for state machine testing.
     pub fn sample(&self) -> T
@@ -266,7 +271,7 @@ where
     {
         Gen::new(move |size, mut seed| {
             const MAX_DISCARDS: usize = 100;
-            
+
             for _ in 0..MAX_DISCARDS {
                 let tree = self.generate(size, seed);
                 if let Some(filtered_tree) = tree.filter(&predicate) {
@@ -275,11 +280,13 @@ where
                 // Try with a different seed
                 seed = seed.split().1;
             }
-            
+
             // If we couldn't generate a valid value after MAX_DISCARDS attempts,
             // this is likely a too-restrictive filter or a generator issue.
             // For now, panic to make the issue visible rather than silently returning invalid data.
-            panic!("Filter: exceeded maximum discards ({}) - predicate may be too restrictive", MAX_DISCARDS);
+            panic!(
+                "Filter: exceeded maximum discards ({MAX_DISCARDS}) - predicate may be too restrictive"
+            );
         })
     }
 
@@ -350,7 +357,7 @@ where
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// // Generate HTTP status codes from common values
     /// let status_codes = vec![200, 404, 500, 302, 401];
     /// let gen = Gen::from_elements(status_codes).unwrap();
@@ -368,7 +375,7 @@ where
         Ok(Gen::new(move |_size, seed| {
             let (index, _new_seed) = seed.next_bounded(elements.len() as u64);
             let chosen = elements[index as usize].clone();
-            
+
             // Create shrinking candidates by trying other elements
             let mut shrinks = Vec::new();
             for (i, element) in elements.iter().enumerate() {
@@ -376,7 +383,7 @@ where
                     shrinks.push(element.clone());
                 }
             }
-            
+
             Tree::with_children(chosen, shrinks.into_iter().map(Tree::singleton).collect())
         }))
     }
@@ -395,7 +402,7 @@ where
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// let common_ports = vec![80, 443, 22, 25, 53];
     /// let gen = Gen::from_dictionary(
     ///     common_ports,
@@ -426,7 +433,7 @@ where
         }
 
         let elements_gen = Gen::from_elements(elements)?;
-        
+
         let choices = vec![
             WeightedChoice::new(elements_weight, elements_gen),
             WeightedChoice::new(random_weight, random_gen),
@@ -468,7 +475,7 @@ macro_rules! impl_numeric_gen_with_towards {
                     };
 
                     let mut shrinks = Vec::new();
-                    
+
                     // Use original shrinking for types that support From<u8>
                     let shrink_values = towards(origin, result);
                     for &shrink_value in &shrink_values {
@@ -515,7 +522,7 @@ macro_rules! impl_numeric_gen_simple_shrink {
                     };
 
                     let mut shrinks = Vec::new();
-                    
+
                     // Generate shrink values without requiring From<u8>
                     let mut current = result;
                     while current != origin && shrinks.len() < 10 {
@@ -566,7 +573,7 @@ macro_rules! impl_unsigned_gen {
                     let result = min.saturating_add(value as $type);
 
                     let origin = min;
-                    
+
                     let shrink_values = towards(origin, result);
                     let mut shrinks = Vec::new();
                     for &shrink_value in &shrink_values {
@@ -604,7 +611,9 @@ impl Gen<i32> {
     pub fn from_range(range: crate::data::Range<i32>) -> Self {
         Gen::new(move |_size, seed| {
             // Prevent overflow by using checked arithmetic
-            let range_size = (range.max as i64).saturating_sub(range.min as i64).saturating_add(1) as u64;
+            let range_size = (range.max as i64)
+                .saturating_sub(range.min as i64)
+                .saturating_add(1) as u64;
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as i32);
 
@@ -612,7 +621,7 @@ impl Gen<i32> {
             let mut shrinks = Vec::new();
 
             // Determine the origin for shrinking
-            let origin = range.origin.unwrap_or_else(|| {
+            let origin = range.origin.unwrap_or({
                 if range.min <= 0 && range.max >= 0 {
                     0 // Zero is in range
                 } else if range.min > 0 {
@@ -655,14 +664,16 @@ impl Gen<i64> {
             let range_size = if range.max == i64::MAX && range.min == i64::MIN {
                 u64::MAX
             } else {
-                (range.max as i128).saturating_sub(range.min as i128).saturating_add(1) as u64
+                (range.max as i128)
+                    .saturating_sub(range.min as i128)
+                    .saturating_add(1) as u64
             };
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as i64);
 
             // Enhanced shrinking similar to i32
             let mut shrinks = Vec::new();
-            let origin = range.origin.unwrap_or_else(|| {
+            let origin = range.origin.unwrap_or({
                 if range.min <= 0 && range.max >= 0 {
                     0
                 } else if range.min > 0 {
@@ -686,7 +697,9 @@ impl Gen<u32> {
     pub fn from_range(range: crate::data::Range<u32>) -> Self {
         Gen::new(move |_size, seed| {
             // Prevent overflow by using checked arithmetic
-            let range_size = (range.max as u64).saturating_sub(range.min as u64).saturating_add(1);
+            let range_size = (range.max as u64)
+                .saturating_sub(range.min as u64)
+                .saturating_add(1);
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as u32);
 
@@ -756,15 +769,23 @@ impl Gen<i8> {
     /// Generate i8 values using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<i8>) -> Self {
         Gen::new(move |_size, seed| {
-            let range_size = (range.max as i16).saturating_sub(range.min as i16).saturating_add(1) as u64;
+            let range_size = (range.max as i16)
+                .saturating_sub(range.min as i16)
+                .saturating_add(1) as u64;
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as i8);
 
             let mut shrinks = Vec::new();
-            let origin = range.origin.unwrap_or_else(|| {
-                if range.min <= 0 && range.max >= 0 { 0 } else if range.min > 0 { range.min } else { range.max }
+            let origin = range.origin.unwrap_or({
+                if range.min <= 0 && range.max >= 0 {
+                    0
+                } else if range.min > 0 {
+                    range.min
+                } else {
+                    range.max
+                }
             });
-            
+
             // Generate shrink values for i8 without requiring From<u8>
             let mut current = result;
             while current != origin && shrinks.len() < 10 {
@@ -787,15 +808,23 @@ impl Gen<i16> {
     /// Generate i16 values using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<i16>) -> Self {
         Gen::new(move |_size, seed| {
-            let range_size = (range.max as i32).saturating_sub(range.min as i32).saturating_add(1) as u64;
+            let range_size = (range.max as i32)
+                .saturating_sub(range.min as i32)
+                .saturating_add(1) as u64;
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as i16);
 
             let mut shrinks = Vec::new();
-            let origin = range.origin.unwrap_or_else(|| {
-                if range.min <= 0 && range.max >= 0 { 0 } else if range.min > 0 { range.min } else { range.max }
+            let origin = range.origin.unwrap_or({
+                if range.min <= 0 && range.max >= 0 {
+                    0
+                } else if range.min > 0 {
+                    range.min
+                } else {
+                    range.max
+                }
             });
-            
+
             // Generate shrink values for i16 without requiring From<u8>
             let mut current = result;
             while current != origin && shrinks.len() < 10 {
@@ -821,16 +850,24 @@ impl Gen<isize> {
             let range_size = if range.max == isize::MAX && range.min == isize::MIN {
                 u64::MAX
             } else {
-                (range.max as i128).saturating_sub(range.min as i128).saturating_add(1) as u64
+                (range.max as i128)
+                    .saturating_sub(range.min as i128)
+                    .saturating_add(1) as u64
             };
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as isize);
 
             let mut shrinks = Vec::new();
-            let origin = range.origin.unwrap_or_else(|| {
-                if range.min <= 0 && range.max >= 0 { 0 } else if range.min > 0 { range.min } else { range.max }
+            let origin = range.origin.unwrap_or({
+                if range.min <= 0 && range.max >= 0 {
+                    0
+                } else if range.min > 0 {
+                    range.min
+                } else {
+                    range.max
+                }
             });
-            
+
             // Generate shrink values for isize without requiring From<u8>
             let mut current = result;
             while current != origin && shrinks.len() < 10 {
@@ -853,13 +890,15 @@ impl Gen<u8> {
     /// Generate u8 values using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<u8>) -> Self {
         Gen::new(move |_size, seed| {
-            let range_size = (range.max as u16).saturating_sub(range.min as u16).saturating_add(1) as u64;
+            let range_size = (range.max as u16)
+                .saturating_sub(range.min as u16)
+                .saturating_add(1) as u64;
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as u8);
 
             let mut shrinks = Vec::new();
             let origin = range.origin.unwrap_or(range.min);
-            
+
             let shrink_values = towards(origin, result);
             for &shrink_value in &shrink_values {
                 if shrink_value >= range.min && shrink_value <= range.max {
@@ -886,7 +925,7 @@ impl Gen<u64> {
 
             let mut shrinks = Vec::new();
             let origin = range.origin.unwrap_or(range.min);
-            
+
             let shrink_values = towards(origin, result);
             for &shrink_value in &shrink_values {
                 if shrink_value >= range.min && shrink_value <= range.max {
@@ -913,7 +952,7 @@ impl Gen<usize> {
 
             let mut shrinks = Vec::new();
             let origin = range.origin.unwrap_or(range.min);
-            
+
             let shrink_values = towards(origin, result);
             for &shrink_value in &shrink_values {
                 if shrink_value >= range.min && shrink_value <= range.max {
@@ -935,23 +974,24 @@ impl Gen<u16> {
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// let status_gen = Gen::<u16>::http_status_code();
     /// ```
     pub fn http_status_code() -> Self {
         let common_statuses = vec![
-            200, 201, 204,           // Success
-            301, 302, 304,           // Redirection  
+            200, 201, 204, // Success
+            301, 302, 304, // Redirection
             400, 401, 403, 404, 409, // Client Error
-            500, 502, 503, 504       // Server Error
+            500, 502, 503, 504, // Server Error
         ];
-        
+
         Gen::from_dictionary(
             common_statuses,
             Gen::int_range(100, 599).map(|i| i as u16), // Any valid HTTP status
-            85, // 85% common statuses
-            15  // 15% random valid statuses
-        ).unwrap()
+            85,                                         // 85% common statuses
+            15,                                         // 15% random valid statuses
+        )
+        .unwrap()
     }
 
     /// Generate network port numbers with weighted distribution.
@@ -962,32 +1002,35 @@ impl Gen<u16> {
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// let port_gen = Gen::<u16>::network_port();
     /// ```
     pub fn network_port() -> Self {
         let well_known = vec![
-            21, 22, 23, 25, 53, 67, 68, 69, 80, 110,    // Basic services
-            143, 443, 993, 995, 587, 465, 993, 143      // Email & secure
+            21, 22, 23, 25, 53, 67, 68, 69, 80, 110, // Basic services
+            143, 443, 993, 995, 587, 465, 993, 143, // Email & secure
         ];
-        
+
         Gen::frequency(vec![
             WeightedChoice::new(40, Gen::from_elements(well_known).unwrap()),
             WeightedChoice::new(35, Gen::int_range(1024, 49151).map(|i| i as u16)),
             WeightedChoice::new(25, Gen::int_range(49152, 65535).map(|i| i as u16)),
-        ]).unwrap()
+        ])
+        .unwrap()
     }
 
     /// Generate u16 values using a Range specification with distribution control.
     pub fn from_range(range: crate::data::Range<u16>) -> Self {
         Gen::new(move |_size, seed| {
-            let range_size = (range.max as u32).saturating_sub(range.min as u32).saturating_add(1) as u64;
+            let range_size = (range.max as u32)
+                .saturating_sub(range.min as u32)
+                .saturating_add(1) as u64;
             let (offset, _new_seed) = range.distribution.sample_u64(seed, range_size);
             let result = range.min.saturating_add(offset as u16);
 
             let mut shrinks = Vec::new();
             let origin = range.origin.unwrap_or(range.min);
-            
+
             let shrink_values = towards(origin, result);
             for &shrink_value in &shrink_values {
                 if shrink_value >= range.min && shrink_value <= range.max {
@@ -1232,45 +1275,45 @@ impl Gen<String> {
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// let domain_gen = Gen::<String>::web_domain();
     /// ```
     pub fn web_domain() -> Self {
         let tlds = vec![
-            ".com", ".org", ".net", ".edu", ".gov", 
-            ".io", ".co", ".uk", ".de", ".fr", ".jp",
-            ".ca", ".au", ".ru", ".br", ".in"
+            ".com", ".org", ".net", ".edu", ".gov", ".io", ".co", ".uk", ".de", ".fr", ".jp",
+            ".ca", ".au", ".ru", ".br", ".in",
         ];
-        
+
         Gen::new(move |size, seed| {
             let (tld_seed, domain_seed) = seed.split();
             let (tld_index, _) = tld_seed.next_bounded(tlds.len() as u64);
             let chosen_tld = tlds[tld_index as usize];
-            
+
             // Generate a random subdomain (3-12 characters)
-            let subdomain_gen = Gen::<String>::alpha_with_range(
-                crate::data::Range::linear(3, 12)
-            );
+            let subdomain_gen = Gen::<String>::alpha_with_range(crate::data::Range::linear(3, 12));
             let subdomain_tree = subdomain_gen.generate(size, domain_seed);
             let subdomain = subdomain_tree.value.to_lowercase();
-            
-            let full_domain = format!("{}{}", subdomain, chosen_tld);
-            
+
+            let full_domain = format!("{subdomain}{chosen_tld}");
+
             // Shrinking: try other TLDs and shrink subdomain
             let mut shrinks = Vec::new();
             for (i, other_tld) in tlds.iter().enumerate() {
                 if i != tld_index as usize {
-                    shrinks.push(format!("{}{}", subdomain, other_tld));
+                    shrinks.push(format!("{subdomain}{other_tld}"));
                 }
             }
-            
+
             // Add shrunk subdomains with the same TLD
             for shrunk_subdomain in subdomain_tree.shrinks() {
                 let shrunk_domain = format!("{}{}", shrunk_subdomain.to_lowercase(), chosen_tld);
                 shrinks.push(shrunk_domain);
             }
-            
-            Tree::with_children(full_domain, shrinks.into_iter().map(Tree::singleton).collect())
+
+            Tree::with_children(
+                full_domain,
+                shrinks.into_iter().map(Tree::singleton).collect(),
+            )
         })
     }
 
@@ -1281,46 +1324,56 @@ impl Gen<String> {
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// let email_gen = Gen::<String>::email_address();
     /// ```
     pub fn email_address() -> Self {
-        let domains = vec![
-            "@gmail.com", "@yahoo.com", "@hotmail.com", "@outlook.com",
-            "@aol.com", "@icloud.com", "@protonmail.com", "@fastmail.com",
-            "@example.com", "@test.com", "@company.org", "@university.edu"
+        let domains = [
+            "@gmail.com",
+            "@yahoo.com",
+            "@hotmail.com",
+            "@outlook.com",
+            "@aol.com",
+            "@icloud.com",
+            "@protonmail.com",
+            "@fastmail.com",
+            "@example.com",
+            "@test.com",
+            "@company.org",
+            "@university.edu",
         ];
-        
+
         Gen::new(move |size, seed| {
             let (domain_seed, username_seed) = seed.split();
             let (domain_index, _) = domain_seed.next_bounded(domains.len() as u64);
             let chosen_domain = domains[domain_index as usize];
-            
+
             // Generate simple username (just alphabetic for simplicity)
-            let username_gen = Gen::<String>::alpha_with_range(
-                crate::data::Range::linear(3, 15)
-            );
-            
+            let username_gen = Gen::<String>::alpha_with_range(crate::data::Range::linear(3, 15));
+
             let username_tree = username_gen.generate(size, username_seed);
             let username = username_tree.value.to_lowercase();
-            
-            let full_email = format!("{}{}", username, chosen_domain);
-            
+
+            let full_email = format!("{username}{chosen_domain}");
+
             // Shrinking: try other domains and shrink username
             let mut shrinks = Vec::new();
             for (i, other_domain) in domains.iter().enumerate() {
                 if i != domain_index as usize {
-                    shrinks.push(format!("{}{}", username, other_domain));
+                    shrinks.push(format!("{username}{other_domain}"));
                 }
             }
-            
+
             // Add shrunk usernames with the same domain
             for shrunk_username in username_tree.shrinks() {
                 let shrunk_email = format!("{}{}", shrunk_username.to_lowercase(), chosen_domain);
                 shrinks.push(shrunk_email);
             }
-            
-            Tree::with_children(full_email, shrinks.into_iter().map(Tree::singleton).collect())
+
+            Tree::with_children(
+                full_email,
+                shrinks.into_iter().map(Tree::singleton).collect(),
+            )
         })
     }
 
@@ -1334,27 +1387,27 @@ impl Gen<String> {
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// let identifier_gen = Gen::<String>::sql_identifier(false); // Safe identifiers only
     /// let risky_gen = Gen::<String>::sql_identifier(true);       // May include keywords
     /// ```
     pub fn sql_identifier(include_keywords: bool) -> Self {
         let keywords = vec![
-            "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", 
-            "JOIN", "INNER", "LEFT", "RIGHT", "ON", "AS", "AND", "OR",
-            "NOT", "NULL", "TRUE", "FALSE", "ORDER", "BY", "GROUP",
-            "HAVING", "LIMIT", "OFFSET", "UNION", "DISTINCT", "COUNT",
-            "SUM", "AVG", "MAX", "MIN", "CREATE", "TABLE", "INDEX",
-            "PRIMARY", "KEY", "FOREIGN", "UNIQUE", "CHECK", "DEFAULT"
+            "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", "JOIN", "INNER", "LEFT",
+            "RIGHT", "ON", "AS", "AND", "OR", "NOT", "NULL", "TRUE", "FALSE", "ORDER", "BY",
+            "GROUP", "HAVING", "LIMIT", "OFFSET", "UNION", "DISTINCT", "COUNT", "SUM", "AVG",
+            "MAX", "MIN", "CREATE", "TABLE", "INDEX", "PRIMARY", "KEY", "FOREIGN", "UNIQUE",
+            "CHECK", "DEFAULT",
         ];
-        
+
         if include_keywords {
             Gen::from_dictionary(
                 keywords.into_iter().map(|s| s.to_string()).collect(),
                 Gen::<String>::alpha_with_range(crate::data::Range::linear(3, 20)),
                 30, // 30% keywords
-                70  // 70% random identifiers
-            ).unwrap()
+                70, // 70% random identifiers
+            )
+            .unwrap()
         } else {
             Gen::<String>::alpha_with_range(crate::data::Range::linear(3, 20))
         }
@@ -1367,20 +1420,21 @@ impl Gen<String> {
     /// # Example
     /// ```rust
     /// use hedgehog_core::*;
-    /// 
+    ///
     /// let rust_gen = Gen::<String>::programming_tokens(&[
     ///     "fn", "let", "mut", "pub", "struct", "enum", "impl", "trait"
     /// ]);
     /// ```
     pub fn programming_tokens(keywords: &[&str]) -> Self {
         let keyword_strings: Vec<String> = keywords.iter().map(|&s| s.to_string()).collect();
-        
+
         Gen::from_dictionary(
             keyword_strings,
             Gen::<String>::alpha_with_range(crate::data::Range::linear(2, 15)),
             40, // 40% keywords
-            60  // 60% random identifiers
-        ).unwrap()
+            60, // 60% random identifiers
+        )
+        .unwrap()
     }
 }
 
@@ -1526,25 +1580,41 @@ where
             let second_tree = second_gen.generate(size, second_seed);
             let third_tree = third_gen.generate(size, third_seed);
 
-            let tuple_value = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone());
+            let tuple_value = (
+                first_tree.value.clone(),
+                second_tree.value.clone(),
+                third_tree.value.clone(),
+            );
 
             let mut shrinks = Vec::new();
 
             // Shrink first component, keep others
             for first_shrink in first_tree.shrinks() {
-                let shrunk_tuple = (first_shrink.clone(), second_tree.value.clone(), third_tree.value.clone());
+                let shrunk_tuple = (
+                    first_shrink.clone(),
+                    second_tree.value.clone(),
+                    third_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             // Shrink second component, keep others
             for second_shrink in second_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_shrink.clone(), third_tree.value.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_shrink.clone(),
+                    third_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             // Shrink third component, keep others
             for third_shrink in third_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_shrink.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_tree.value.clone(),
+                    third_shrink.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
@@ -1562,7 +1632,12 @@ where
     W: 'static + Clone,
 {
     /// Generate 4-element tuples using the given generators.
-    pub fn tuple_of(first_gen: Gen<T>, second_gen: Gen<U>, third_gen: Gen<V>, fourth_gen: Gen<W>) -> Self {
+    pub fn tuple_of(
+        first_gen: Gen<T>,
+        second_gen: Gen<U>,
+        third_gen: Gen<V>,
+        fourth_gen: Gen<W>,
+    ) -> Self {
         Gen::new(move |size, seed| {
             let (first_seed, rest_seed) = seed.split();
             let (second_seed, rest_seed) = rest_seed.split();
@@ -1584,22 +1659,42 @@ where
 
             // Shrink each component while keeping others fixed
             for first_shrink in first_tree.shrinks() {
-                let shrunk_tuple = (first_shrink.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_tree.value.clone());
+                let shrunk_tuple = (
+                    first_shrink.clone(),
+                    second_tree.value.clone(),
+                    third_tree.value.clone(),
+                    fourth_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             for second_shrink in second_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_shrink.clone(), third_tree.value.clone(), fourth_tree.value.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_shrink.clone(),
+                    third_tree.value.clone(),
+                    fourth_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             for third_shrink in third_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_shrink.clone(), fourth_tree.value.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_tree.value.clone(),
+                    third_shrink.clone(),
+                    fourth_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             for fourth_shrink in fourth_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_shrink.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_tree.value.clone(),
+                    third_tree.value.clone(),
+                    fourth_shrink.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
@@ -1618,7 +1713,13 @@ where
     X: 'static + Clone,
 {
     /// Generate 5-element tuples using the given generators.
-    pub fn tuple_of(first_gen: Gen<T>, second_gen: Gen<U>, third_gen: Gen<V>, fourth_gen: Gen<W>, fifth_gen: Gen<X>) -> Self {
+    pub fn tuple_of(
+        first_gen: Gen<T>,
+        second_gen: Gen<U>,
+        third_gen: Gen<V>,
+        fourth_gen: Gen<W>,
+        fifth_gen: Gen<X>,
+    ) -> Self {
         Gen::new(move |size, seed| {
             let (first_seed, rest_seed) = seed.split();
             let (second_seed, rest_seed) = rest_seed.split();
@@ -1643,27 +1744,57 @@ where
 
             // Shrink each component while keeping others fixed
             for first_shrink in first_tree.shrinks() {
-                let shrunk_tuple = (first_shrink.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_tree.value.clone(), fifth_tree.value.clone());
+                let shrunk_tuple = (
+                    first_shrink.clone(),
+                    second_tree.value.clone(),
+                    third_tree.value.clone(),
+                    fourth_tree.value.clone(),
+                    fifth_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             for second_shrink in second_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_shrink.clone(), third_tree.value.clone(), fourth_tree.value.clone(), fifth_tree.value.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_shrink.clone(),
+                    third_tree.value.clone(),
+                    fourth_tree.value.clone(),
+                    fifth_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             for third_shrink in third_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_shrink.clone(), fourth_tree.value.clone(), fifth_tree.value.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_tree.value.clone(),
+                    third_shrink.clone(),
+                    fourth_tree.value.clone(),
+                    fifth_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             for fourth_shrink in fourth_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_shrink.clone(), fifth_tree.value.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_tree.value.clone(),
+                    third_tree.value.clone(),
+                    fourth_shrink.clone(),
+                    fifth_tree.value.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
             for fifth_shrink in fifth_tree.shrinks() {
-                let shrunk_tuple = (first_tree.value.clone(), second_tree.value.clone(), third_tree.value.clone(), fourth_tree.value.clone(), fifth_shrink.clone());
+                let shrunk_tuple = (
+                    first_tree.value.clone(),
+                    second_tree.value.clone(),
+                    third_tree.value.clone(),
+                    fourth_tree.value.clone(),
+                    fifth_shrink.clone(),
+                );
                 shrinks.push(Tree::singleton(shrunk_tuple));
             }
 
@@ -1773,60 +1904,59 @@ where
     B: 'static + Clone + std::fmt::Debug,
 {
     /// Generate functions from a lookup table mapping inputs to outputs.
-    /// 
+    ///
     /// This creates a finite function by generating a table of input-output pairs
     /// and using a default value for unmapped inputs. The function will have
     /// deterministic behavior that can be shrunk by reducing the lookup table.
-    pub fn function_of(
-        input_gen: Gen<A>,
-        output_gen: Gen<B>,
-        default_output: B,
-    ) -> Self 
+    pub fn function_of(input_gen: Gen<A>, output_gen: Gen<B>, default_output: B) -> Self
     where
         B: Clone,
     {
         Gen::new(move |size, seed| {
             use std::collections::HashMap;
-            
+
             let (table_size_seed, rest_seed) = seed.split();
             let (table_size, _) = table_size_seed.next_bounded((size.get() + 1) as u64);
-            let table_size = (table_size as usize).max(1).min(20); // Reasonable bounds
-            
+            let table_size = (table_size as usize).clamp(1, 20); // Reasonable bounds
+
             let mut current_seed = rest_seed;
             let mut lookup_table = HashMap::new();
             let mut input_trees = Vec::new();
             let mut output_trees = Vec::new();
-            
+
             // Generate lookup table entries
             for _ in 0..table_size {
                 let (input_seed, rest) = current_seed.split();
                 let (output_seed, next_seed) = rest.split();
                 current_seed = next_seed;
-                
+
                 let input_tree = input_gen.generate(size, input_seed);
                 let output_tree = output_gen.generate(size, output_seed);
-                
+
                 lookup_table.insert(input_tree.value.clone(), output_tree.value.clone());
                 input_trees.push(input_tree);
                 output_trees.push(output_tree);
             }
-            
+
             let default = default_output.clone();
             let lookup_table_clone = lookup_table.clone();
             let function: Box<dyn Fn(A) -> B> = Box::new(move |input: A| {
-                lookup_table_clone.get(&input).cloned().unwrap_or_else(|| default.clone())
+                lookup_table_clone
+                    .get(&input)
+                    .cloned()
+                    .unwrap_or_else(|| default.clone())
             });
-            
+
             // Shrinking strategy: reduce lookup table size and shrink individual entries
             let mut shrinks = Vec::new();
-            
+
             // Shrink to smaller lookup tables
             if lookup_table.len() > 1 {
                 // Try empty lookup table (constant function returning default)
                 let empty_default = default_output.clone();
                 let constant_fn: Box<dyn Fn(A) -> B> = Box::new(move |_: A| empty_default.clone());
                 shrinks.push(Tree::singleton(constant_fn));
-                
+
                 // Try lookup table with half the entries
                 let half_size = lookup_table.len() / 2;
                 if half_size > 0 {
@@ -1836,39 +1966,45 @@ where
                     }
                     let smaller_default = default_output.clone();
                     let smaller_fn: Box<dyn Fn(A) -> B> = Box::new(move |input: A| {
-                        smaller_table.get(&input).cloned().unwrap_or_else(|| smaller_default.clone())
+                        smaller_table
+                            .get(&input)
+                            .cloned()
+                            .unwrap_or_else(|| smaller_default.clone())
                     });
                     shrinks.push(Tree::singleton(smaller_fn));
                 }
             }
-            
+
             // Shrink individual lookup entries
             for (i, output_tree) in output_trees.iter().enumerate() {
                 for shrunk_output in output_tree.shrinks() {
                     let mut shrunk_table = lookup_table.clone();
                     let input_key = &input_trees[i].value;
                     shrunk_table.insert(input_key.clone(), shrunk_output.clone());
-                    
+
                     let shrunk_default = default_output.clone();
                     let shrunk_fn: Box<dyn Fn(A) -> B> = Box::new(move |input: A| {
-                        shrunk_table.get(&input).cloned().unwrap_or_else(|| shrunk_default.clone())
+                        shrunk_table
+                            .get(&input)
+                            .cloned()
+                            .unwrap_or_else(|| shrunk_default.clone())
                     });
                     shrinks.push(Tree::singleton(shrunk_fn));
                 }
             }
-            
+
             Tree::with_children(function, shrinks)
         })
     }
-    
+
     /// Generate constant functions that always return the same value.
     pub fn constant_function(output_gen: Gen<B>) -> Self {
         Gen::new(move |size, seed| {
             let output_tree = output_gen.generate(size, seed);
             let output_value = output_tree.value.clone();
-            
+
             let function: Box<dyn Fn(A) -> B> = Box::new(move |_: A| output_value.clone());
-            
+
             // Shrink by shrinking the constant output value
             let mut shrinks = Vec::new();
             for shrunk_output in output_tree.shrinks() {
@@ -1876,13 +2012,13 @@ where
                 let shrunk_fn: Box<dyn Fn(A) -> B> = Box::new(move |_: A| shrunk_value.clone());
                 shrinks.push(Tree::singleton(shrunk_fn));
             }
-            
+
             Tree::with_children(function, shrinks)
         })
     }
-    
+
     /// Generate identity-like functions for compatible input/output types.
-    pub fn identity_function() -> Self 
+    pub fn identity_function() -> Self
     where
         A: Into<B>,
     {
@@ -1909,44 +2045,48 @@ where
     ) -> Self {
         Gen::new(move |size, seed| {
             use std::collections::HashMap;
-            
+
             let (table_size_seed, rest_seed) = seed.split();
             let (table_size, _) = table_size_seed.next_bounded((size.get() + 1) as u64);
-            let table_size = (table_size as usize).max(1).min(15); // Smaller for binary functions
-            
+            let table_size = (table_size as usize).clamp(1, 15); // Smaller for binary functions
+
             let mut current_seed = rest_seed;
             let mut lookup_table = HashMap::new();
             let mut output_trees = Vec::new();
-            
+
             // Generate lookup table entries
             for _ in 0..table_size {
                 let (input_a_seed, rest) = current_seed.split();
                 let (input_b_seed, rest2) = rest.split();
                 let (output_seed, next_seed) = rest2.split();
                 current_seed = next_seed;
-                
+
                 let input_a_tree = input_a_gen.generate(size, input_a_seed);
                 let input_b_tree = input_b_gen.generate(size, input_b_seed);
                 let output_tree = output_gen.generate(size, output_seed);
-                
+
                 let key = (input_a_tree.value.clone(), input_b_tree.value.clone());
                 lookup_table.insert(key, output_tree.value.clone());
                 output_trees.push(output_tree);
             }
-            
+
             let default = default_output.clone();
             let function: Box<dyn Fn(A, B) -> C> = Box::new(move |a: A, b: B| {
-                lookup_table.get(&(a, b)).cloned().unwrap_or_else(|| default.clone())
+                lookup_table
+                    .get(&(a, b))
+                    .cloned()
+                    .unwrap_or_else(|| default.clone())
             });
-            
+
             // Shrinking: similar to unary functions
             let mut shrinks = Vec::new();
-            
+
             // Constant function shrink
             let constant_default = default_output.clone();
-            let constant_fn: Box<dyn Fn(A, B) -> C> = Box::new(move |_: A, _: B| constant_default.clone());
+            let constant_fn: Box<dyn Fn(A, B) -> C> =
+                Box::new(move |_: A, _: B| constant_default.clone());
             shrinks.push(Tree::singleton(constant_fn));
-            
+
             Tree::with_children(function, shrinks)
         })
     }
@@ -1961,56 +2101,54 @@ where
     pub fn predicate_from_set(accepted_gen: Gen<Vec<A>>) -> Self {
         Gen::new(move |size, seed| {
             let accepted_tree = accepted_gen.generate(size, seed);
-            let accepted_set: std::collections::HashSet<A> = 
+            let accepted_set: std::collections::HashSet<A> =
                 accepted_tree.value.iter().cloned().collect();
-            
+
             let accepted_set_clone = accepted_set.clone();
-            let predicate: Box<dyn Fn(A) -> bool> = Box::new(move |input: A| {
-                accepted_set_clone.contains(&input)
-            });
-            
+            let predicate: Box<dyn Fn(A) -> bool> =
+                Box::new(move |input: A| accepted_set_clone.contains(&input));
+
             // Shrinking: shrink the accepted set
             let mut shrinks = Vec::new();
-            
+
             // Always-false predicate (empty set)
             let false_pred: Box<dyn Fn(A) -> bool> = Box::new(|_: A| false);
             shrinks.push(Tree::singleton(false_pred));
-            
+
             // Always-true predicate (if we have any accepted values)
             if !accepted_set.is_empty() {
                 let true_pred: Box<dyn Fn(A) -> bool> = Box::new(|_: A| true);
                 shrinks.push(Tree::singleton(true_pred));
             }
-            
+
             // Shrink by reducing the accepted set
             for shrunk_accepted in accepted_tree.shrinks() {
-                let shrunk_set: std::collections::HashSet<A> = 
+                let shrunk_set: std::collections::HashSet<A> =
                     shrunk_accepted.iter().cloned().collect();
-                let shrunk_pred: Box<dyn Fn(A) -> bool> = Box::new(move |input: A| {
-                    shrunk_set.contains(&input)
-                });
+                let shrunk_pred: Box<dyn Fn(A) -> bool> =
+                    Box::new(move |input: A| shrunk_set.contains(&input));
                 shrinks.push(Tree::singleton(shrunk_pred));
             }
-            
+
             Tree::with_children(predicate, shrinks)
         })
     }
-    
+
     /// Generate predicate functions that always return the same boolean value.
     pub fn constant_predicate(value_gen: Gen<bool>) -> Self {
         Gen::new(move |size, seed| {
             let bool_tree = value_gen.generate(size, seed);
             let bool_value = bool_tree.value;
-            
+
             let predicate: Box<dyn Fn(A) -> bool> = Box::new(move |_: A| bool_value);
-            
+
             // Shrinking: prefer false over true
             let mut shrinks = Vec::new();
             if bool_value {
                 let false_pred: Box<dyn Fn(A) -> bool> = Box::new(|_: A| false);
                 shrinks.push(Tree::singleton(false_pred));
             }
-            
+
             Tree::with_children(predicate, shrinks)
         })
     }
@@ -2024,22 +2162,25 @@ where
     /// Generate a constant comparator that always returns the same ordering.
     pub fn constant_comparator(ordering: std::cmp::Ordering) -> Self {
         Gen::new(move |_size, _seed| {
-            let comparator: Box<dyn Fn(A, A) -> std::cmp::Ordering> = 
+            let comparator: Box<dyn Fn(A, A) -> std::cmp::Ordering> =
                 Box::new(move |_: A, _: A| ordering);
             Tree::singleton(comparator)
         })
     }
-    
+
     /// Generate comparators based on ordering choices.
     pub fn comparator_from_choices(choices: Vec<std::cmp::Ordering>) -> Self {
         Gen::new(move |_size, seed| {
             // Pick a random ordering from the choices
             let (choice_index, _) = seed.next_bounded(choices.len() as u64);
-            let chosen_ordering = choices.get(choice_index as usize).copied().unwrap_or(std::cmp::Ordering::Equal);
-            
-            let constant_cmp: Box<dyn Fn(A, A) -> std::cmp::Ordering> = 
+            let chosen_ordering = choices
+                .get(choice_index as usize)
+                .copied()
+                .unwrap_or(std::cmp::Ordering::Equal);
+
+            let constant_cmp: Box<dyn Fn(A, A) -> std::cmp::Ordering> =
                 Box::new(move |_: A, _: A| chosen_ordering);
-            
+
             Tree::singleton(constant_cmp)
         })
     }
@@ -2254,9 +2395,7 @@ mod tests {
         // Should heavily favor Ok values (allow some variance)
         assert!(
             ok_count > err_count * 5,
-            "Weighted result should favor Ok: Ok={}, Err={}",
-            ok_count,
-            err_count
+            "Weighted result should favor Ok: Ok={ok_count}, Err={err_count}"
         );
     }
 
@@ -2324,7 +2463,7 @@ mod tests {
         // All elements should be in expected range
         for &element in &tree.value {
             assert!(
-                element >= -100 && element <= 100,
+                (-100..=100).contains(&element),
                 "Vec<i32> elements should be in range [-100, 100]"
             );
         }
@@ -2334,9 +2473,10 @@ mod tests {
         let tree2 = vec_bool_gen.generate(Size::new(5), seed);
 
         // All elements should be valid booleans (always true, but good for completeness)
+        #[allow(clippy::nonminimal_bool)]
         for &element in &tree2.value {
             assert!(
-                element == true || element == false,
+                element || !element,
                 "Vec<bool> elements should be valid booleans"
             );
         }
@@ -2433,7 +2573,7 @@ mod tests {
         let linear_string_gen = Gen::<String>::alpha_with_range(crate::data::Range::linear(1, 20));
         let linear_string_tree = linear_string_gen.generate(Size::new(10), Seed::from_u64(42));
 
-        assert!(linear_string_tree.value.len() >= 1 && linear_string_tree.value.len() <= 20);
+        assert!(!linear_string_tree.value.is_empty() && linear_string_tree.value.len() <= 20);
         assert!(linear_string_tree
             .value
             .chars()
@@ -2523,183 +2663,198 @@ mod tests {
         let input_gen = Gen::int_range(0, 5);
         let output_gen = Gen::int_range(10, 20);
         let function_gen = Gen::<Box<dyn Fn(i32) -> i32>>::function_of(input_gen, output_gen, -1);
-        
+
         let seed = Seed::from_u64(42);
         let tree = function_gen.generate(Size::new(10), seed);
-        
+
         // Test that the function works
         let result1 = (tree.value)(0);
         let result2 = (tree.value)(0); // Should be deterministic
         assert_eq!(result1, result2);
-        
+
         // Test that unmapped inputs return default
         let default_result = (tree.value)(999);
         assert_eq!(default_result, -1);
-        
+
         // Test shrinking exists
         let shrinks = tree.shrinks();
         assert!(!shrinks.is_empty(), "Function should have shrinks");
     }
-    
+
     #[test]
     fn test_constant_function_generator() {
         let output_gen = Gen::int_range(10, 20);
         let function_gen = Gen::<Box<dyn Fn(i32) -> i32>>::constant_function(output_gen);
-        
+
         let seed = Seed::from_u64(123);
         let tree = function_gen.generate(Size::new(10), seed);
-        
+
         // Test that function is constant
         let result1 = (tree.value)(0);
         let result2 = (tree.value)(42);
         let result3 = (tree.value)(-100);
-        
+
         assert_eq!(result1, result2);
         assert_eq!(result2, result3);
-        assert!(result1 >= 10 && result1 <= 20);
-        
+        assert!((10..=20).contains(&result1));
+
         // Test shrinking
         let shrinks = tree.shrinks();
         assert!(!shrinks.is_empty(), "Constant function should have shrinks");
     }
-    
+
     #[test]
     fn test_identity_function_generator() {
         let function_gen = Gen::<Box<dyn Fn(i32) -> i32>>::identity_function();
-        
+
         let seed = Seed::from_u64(456);
         let tree = function_gen.generate(Size::new(10), seed);
-        
+
         // Test identity property
         assert_eq!((tree.value)(0), 0);
         assert_eq!((tree.value)(42), 42);
         assert_eq!((tree.value)(-100), -100);
-        
+
         // Identity function has no shrinks (it's already minimal)
         let shrinks = tree.shrinks();
-        assert!(shrinks.is_empty(), "Identity function should have no shrinks");
+        assert!(
+            shrinks.is_empty(),
+            "Identity function should have no shrinks"
+        );
     }
-    
+
     #[test]
     fn test_binary_function_generator() {
         let input_a_gen = Gen::int_range(0, 2);
         let input_b_gen = Gen::int_range(0, 2);
         let output_gen = Gen::int_range(10, 15);
         let function_gen = Gen::<Box<dyn Fn(i32, i32) -> i32>>::binary_function_of(
-            input_a_gen, input_b_gen, output_gen, 0
+            input_a_gen,
+            input_b_gen,
+            output_gen,
+            0,
         );
-        
+
         let seed = Seed::from_u64(789);
         let tree = function_gen.generate(Size::new(10), seed);
-        
+
         // Test that function works
         let result1 = (tree.value)(0, 0);
         let result2 = (tree.value)(0, 0); // Should be deterministic
         assert_eq!(result1, result2);
-        
+
         // Test default for unmapped inputs
         let default_result = (tree.value)(999, 999);
         assert_eq!(default_result, 0);
-        
+
         // Test shrinking
         let shrinks = tree.shrinks();
         assert!(!shrinks.is_empty(), "Binary function should have shrinks");
     }
-    
-    #[test] 
+
+    #[test]
     fn test_predicate_from_set_generator() {
         let accepted_gen = Gen::<Vec<i32>>::vec_of(Gen::int_range(0, 5));
         let predicate_gen = Gen::<Box<dyn Fn(i32) -> bool>>::predicate_from_set(accepted_gen);
-        
+
         let seed = Seed::from_u64(333);
         let tree = predicate_gen.generate(Size::new(10), seed);
-        
+
         // Test predicate behavior - should be deterministic
         let result1 = (tree.value)(0);
         let result2 = (tree.value)(0);
         assert_eq!(result1, result2);
-        
+
         // Test shrinking includes false predicate
         let shrinks = tree.shrinks();
         assert!(!shrinks.is_empty(), "Predicate should have shrinks");
-        
+
         // At least one shrink should be always-false
-        let has_false_shrink = shrinks.iter().any(|pred| {
-            !(pred)(0) && !(pred)(1) && !(pred)(2) && !(pred)(999)
-        });
-        assert!(has_false_shrink, "Should have always-false predicate shrink");
+        let has_false_shrink = shrinks
+            .iter()
+            .any(|pred| !(pred)(0) && !(pred)(1) && !(pred)(2) && !(pred)(999));
+        assert!(
+            has_false_shrink,
+            "Should have always-false predicate shrink"
+        );
     }
-    
+
     #[test]
     fn test_constant_predicate_generator() {
         let bool_gen = Gen::bool();
         let predicate_gen = Gen::<Box<dyn Fn(i32) -> bool>>::constant_predicate(bool_gen);
-        
+
         let seed = Seed::from_u64(666);
         let tree = predicate_gen.generate(Size::new(10), seed);
-        
+
         // Test that predicate is constant
         let result1 = (tree.value)(0);
         let result2 = (tree.value)(42);
         let result3 = (tree.value)(-100);
-        
+
         assert_eq!(result1, result2);
         assert_eq!(result2, result3);
-        
+
         // If true predicate, should have false shrink
         if result1 {
             let shrinks = tree.shrinks();
             assert!(!shrinks.is_empty(), "True predicate should shrink to false");
-            
+
             // Should have a false shrink
             let has_false_shrink = shrinks.iter().any(|pred| !(pred)(0));
             assert!(has_false_shrink, "Should shrink to false predicate");
         }
     }
-    
+
     #[test]
     fn test_constant_comparator_generator() {
-        let comparator_gen = Gen::<Box<dyn Fn(i32, i32) -> std::cmp::Ordering>>::constant_comparator(std::cmp::Ordering::Equal);
-        
+        let comparator_gen =
+            Gen::<Box<dyn Fn(i32, i32) -> std::cmp::Ordering>>::constant_comparator(
+                std::cmp::Ordering::Equal,
+            );
+
         let seed = Seed::from_u64(999);
         let tree = comparator_gen.generate(Size::new(10), seed);
-        
+
         // Test comparator properties
         let cmp_result1 = (tree.value)(1, 2);
         let cmp_result2 = (tree.value)(1, 2); // Should be deterministic
         assert_eq!(cmp_result1, cmp_result2);
         assert_eq!(cmp_result1, std::cmp::Ordering::Equal);
-        
+
         // Test reflexivity: compare something to itself
         let self_cmp = (tree.value)(5, 5);
         assert_eq!(self_cmp, std::cmp::Ordering::Equal);
-        
+
         // Constant comparator has no shrinks (it's already minimal)
         let shrinks = tree.shrinks();
-        assert!(shrinks.is_empty(), "Constant comparator should have no shrinks");
+        assert!(
+            shrinks.is_empty(),
+            "Constant comparator should have no shrinks"
+        );
     }
 
     #[test]
     fn test_towards_algorithm() {
         // Test basic functionality
         let result = towards(0, 8);
-        println!("towards(0, 8) = {:?}", result);
+        println!("towards(0, 8) = {result:?}");
         assert_eq!(result[0], 0); // First element is always destination
         assert!(result.len() > 1); // Should have multiple shrinks
-        
+
         let result2 = towards(0, 4);
-        println!("towards(0, 4) = {:?}", result2);
-        
+        println!("towards(0, 4) = {result2:?}");
+
         // Test same values
         assert_eq!(towards(5i32, 5i32), Vec::<i32>::new());
-        
+
         // Test edge cases
         assert_eq!(towards(0i32, 1i32), vec![0]);
         assert_eq!(towards(1i32, 0i32), vec![1]);
-        
+
         // Test that destination is always first (key property)
         let result3 = towards(10, 20);
-        println!("towards(10, 20) = {:?}", result3);
+        println!("towards(10, 20) = {result3:?}");
         assert_eq!(result3[0], 10);
     }
 
@@ -2707,23 +2862,23 @@ mod tests {
     fn test_removes_function() {
         // Test basic removal
         let input = vec![1, 2, 3, 4];
-        
+
         // Remove 1 element
         let result = removes(1, &input);
-        println!("removes(1, [1,2,3,4]) = {:?}", result);
-        
-        // Remove 2 elements  
+        println!("removes(1, [1,2,3,4]) = {result:?}");
+
+        // Remove 2 elements
         let result2 = removes(2, &input);
-        println!("removes(2, [1,2,3,4]) = {:?}", result2);
-        
+        println!("removes(2, [1,2,3,4]) = {result2:?}");
+
         // Remove all elements
         let result_all = removes(4, &input);
         assert_eq!(result_all, vec![Vec::<i32>::new()]);
-        
+
         // Remove 0 elements
         let result_none = removes(0, &input);
         assert_eq!(result_none, vec![input.clone()]);
-        
+
         // Remove more than available
         let result_over = removes(10, &input);
         assert!(result_over.is_empty());
@@ -2733,17 +2888,17 @@ mod tests {
     fn test_list_shrinks_comprehensive() {
         let input = vec![1, 2, 3, 4];
         let shrinks = list_shrinks(&input);
-        println!("list_shrinks([1,2,3,4]) = {:?}", shrinks);
-        
+        println!("list_shrinks([1,2,3,4]) = {shrinks:?}");
+
         // Should include empty list (from removing all 4 elements)
         assert!(shrinks.contains(&vec![]));
-        
+
         // Should have various removal patterns - just verify we get multiple results
         assert!(!shrinks.is_empty());
-        
+
         // Verify we get different lengths (the key property)
         let lengths: Vec<usize> = shrinks.iter().map(|v| v.len()).collect();
-        println!("shrink lengths: {:?}", lengths);
+        println!("shrink lengths: {lengths:?}");
         assert!(lengths.contains(&0)); // Empty list
         assert!(lengths.len() > 2); // Multiple different shrinks
     }
@@ -2753,7 +2908,7 @@ mod tests {
     fn test_from_elements_basic() {
         let elements = vec!["apple", "banana", "cherry"];
         let gen = Gen::from_elements(elements.clone()).unwrap();
-        
+
         let mut generated_values = std::collections::HashSet::new();
         for _ in 0..20 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
@@ -2761,77 +2916,80 @@ mod tests {
             assert!(elements.contains(&value));
             generated_values.insert(value);
         }
-        
+
         // Should generate different values over multiple runs
         assert!(generated_values.len() > 1);
     }
-    
+
     #[test]
     fn test_from_elements_empty_error() {
         let empty_elements: Vec<i32> = vec![];
         let result = Gen::from_elements(empty_elements);
-        
+
         assert!(result.is_err());
         if let Err(crate::HedgehogError::InvalidGenerator { message }) = result {
             assert!(message.contains("empty"));
         }
     }
-    
+
     #[test]
     fn test_from_elements_shrinking() {
         let elements = vec![1, 2, 3, 4, 5];
         let gen = Gen::from_elements(elements).unwrap();
         let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
-        
+
         // Should have shrinks to other elements
         let shrinks = tree.shrinks();
         assert!(!shrinks.is_empty());
-        
+
         // All shrinks should be from the original elements
         for &shrink in shrinks {
             assert!([1, 2, 3, 4, 5].contains(&shrink));
         }
     }
-    
+
     #[test]
     fn test_from_dictionary_basic() {
         let dictionary = vec![1, 2, 3];
         let random_gen = Gen::int_range(10, 20);
-        
+
         let gen = Gen::from_dictionary(dictionary.clone(), random_gen, 50, 50).unwrap();
-        
+
         let mut dict_values = 0;
         let mut random_values = 0;
-        
+
         for _ in 0..100 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let value = tree.value;
-            
+
             if dictionary.contains(&value) {
                 dict_values += 1;
-            } else if value >= 10 && value <= 20 {
+            } else if (10..=20).contains(&value) {
                 random_values += 1;
             }
         }
-        
+
         // Should get both dictionary and random values
         assert!(dict_values > 0);
         assert!(random_values > 0);
-        
+
         // With 50/50 weights, should be roughly balanced
         let total = dict_values + random_values;
         let dict_ratio = dict_values as f64 / total as f64;
-        assert!(dict_ratio > 0.3 && dict_ratio < 0.7, "Dictionary ratio: {}", dict_ratio);
+        assert!(
+            dict_ratio > 0.3 && dict_ratio < 0.7,
+            "Dictionary ratio: {dict_ratio}"
+        );
     }
-    
+
     #[test]
     fn test_from_dictionary_weights() {
         let dictionary = vec![1];
         let random_gen = Gen::int_range(10, 10); // Always generates 10
-        
+
         // Heavy weight on dictionary
         let gen = Gen::from_dictionary(dictionary, random_gen, 90, 10).unwrap();
-        
+
         let mut dict_count = 0;
         for _ in 0..100 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
@@ -2839,150 +2997,150 @@ mod tests {
                 dict_count += 1;
             }
         }
-        
+
         // Should heavily favor dictionary values
-        assert!(dict_count > 70, "Dictionary count: {}", dict_count);
+        assert!(dict_count > 70, "Dictionary count: {dict_count}");
     }
-    
+
     #[test]
     fn test_from_dictionary_errors() {
         let empty_dict: Vec<i32> = vec![];
-        
+
         // Empty dictionary should error
         assert!(Gen::from_dictionary(empty_dict, Gen::int_range(1, 10), 50, 50).is_err());
-        
-        // Zero weights should error  
+
+        // Zero weights should error
         assert!(Gen::from_dictionary(vec![1], Gen::int_range(1, 10), 0, 0).is_err());
     }
-    
-    #[test] 
+
+    #[test]
     fn test_http_status_code_generator() {
         let gen = Gen::<u16>::http_status_code();
-        
+
         let mut statuses = std::collections::HashSet::new();
         for _ in 0..50 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let status = tree.value;
-            
+
             // Should be valid HTTP status codes
-            assert!(status >= 100 && status <= 599);
+            assert!((100..=599).contains(&status));
             statuses.insert(status);
         }
-        
+
         // Should generate variety of status codes
         assert!(statuses.len() > 3);
-        
+
         // Should heavily favor common codes, so we should see some
         let common_codes = [200, 404, 500];
         let has_common = statuses.iter().any(|&s| common_codes.contains(&s));
-        assert!(has_common, "Generated statuses: {:?}", statuses);
+        assert!(has_common, "Generated statuses: {statuses:?}");
     }
-    
+
     #[test]
     fn test_network_port_generator() {
         let gen = Gen::<u16>::network_port();
-        
+
         let mut ports = std::collections::HashSet::new();
         for _ in 0..50 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let port = tree.value;
-            
+
             // Should be valid port numbers
             assert!(port > 0);
             ports.insert(port);
         }
-        
+
         // Should generate variety of ports
         assert!(ports.len() > 5);
-        
+
         // Should include some well-known ports
         let well_known = [22, 80, 443];
         let _has_well_known = ports.iter().any(|&p| well_known.contains(&p));
         // Note: This might occasionally fail due to randomness, but should usually pass
         // We don't assert on _has_well_known as it's probabilistic
     }
-    
+
     #[test]
     fn test_web_domain_generator() {
         let gen = Gen::<String>::web_domain();
-        
+
         let mut domains = std::collections::HashSet::new();
         for _ in 0..20 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let domain = tree.value;
-            
+
             // Should have a TLD
             assert!(domain.contains('.'));
-            
+
             // Should have a reasonable structure
             let parts: Vec<&str> = domain.split('.').collect();
             assert!(parts.len() >= 2);
-            
+
             // Domain part should be non-empty and alphabetic
             assert!(!parts[0].is_empty());
             assert!(parts[0].chars().all(|c| c.is_ascii_alphabetic()));
-            
+
             domains.insert(domain);
         }
-        
+
         // Should generate variety
         assert!(domains.len() > 3);
     }
-    
+
     #[test]
     fn test_email_address_generator() {
         let gen = Gen::<String>::email_address();
-        
+
         for _ in 0..10 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let email = tree.value;
-            
+
             // Should have @ symbol
             assert!(email.contains('@'));
-            
+
             // Should have reasonable structure
             let parts: Vec<&str> = email.split('@').collect();
             assert_eq!(parts.len(), 2);
-            
+
             let username = parts[0];
             let domain = parts[1];
-            
+
             // Username should be non-empty
             assert!(!username.is_empty());
             assert!(username.len() >= 3);
-            
+
             // Domain should be non-empty
             assert!(!domain.is_empty());
             assert!(domain.contains('.'));
         }
     }
-    
+
     #[test]
     fn test_sql_identifier_safe() {
         let gen = Gen::<String>::sql_identifier(false);
-        
+
         for _ in 0..20 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let identifier = tree.value;
-            
+
             // Should be non-empty alphabetic
             assert!(!identifier.is_empty());
             assert!(identifier.chars().all(|c| c.is_ascii_alphabetic()));
             assert!(identifier.len() >= 3 && identifier.len() <= 20);
         }
     }
-    
+
     #[test]
     fn test_sql_identifier_with_keywords() {
         let gen = Gen::<String>::sql_identifier(true);
-        
+
         let mut has_keyword = false;
         let mut has_random = false;
-        
+
         for _ in 0..30 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let identifier = tree.value;
-            
+
             // Check if it's a SQL keyword
             let sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE"];
             if sql_keywords.contains(&identifier.as_str()) {
@@ -2991,30 +3149,30 @@ mod tests {
                 has_random = true;
             }
         }
-        
+
         // Should get mix of keywords and random identifiers
         assert!(has_keyword || has_random); // At least one type should appear
     }
-    
+
     #[test]
     fn test_programming_tokens() {
         let rust_keywords = ["fn", "let", "mut", "pub", "struct"];
         let gen = Gen::<String>::programming_tokens(&rust_keywords);
-        
+
         let mut has_keyword = false;
         let mut has_random = false;
-        
+
         for _ in 0..30 {
             let tree = gen.generate(crate::data::Size::new(10), crate::data::Seed::random());
             let token = tree.value;
-            
+
             if rust_keywords.contains(&token.as_str()) {
                 has_keyword = true;
             } else if token.chars().all(|c| c.is_ascii_alphabetic()) {
                 has_random = true;
             }
         }
-        
+
         // Should get mix of keywords and random tokens
         assert!(has_keyword || has_random); // At least one type should appear
     }
