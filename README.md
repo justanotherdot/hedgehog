@@ -15,6 +15,7 @@ Property-based testing library for Rust, inspired by the original [Hedgehog](htt
 - **Example integration** - Mix explicit test examples with generated values
 - **Dictionary support** - Inject domain-specific realistic values (HTTP codes, SQL keywords, web domains)
 - **Parallel testing** - Speed up tests and detect race conditions with multi-threaded execution
+- **State machine testing** - Sequential and parallel command testing with linearizability verification
 - **Targeted testing** - Search-guided generation to find inputs that maximize/minimize specific objectives
 - **Derive macros** - Automatic generator creation for custom types
 
@@ -173,140 +174,77 @@ fn prop_user_validation() {
 
 ### State Machine Testing
 
-Test stateful systems by generating sequences of commands and verifying state consistency:
+Test stateful systems by generating sequences of commands and verifying behavior:
 
 ```rust
-use hedgehog::*;
+use hedgehog_core::state::*;
+use hedgehog_core::gen::Gen;
 
 #[test]
-fn prop_shopping_cart_state_machine() {
-    #[derive(Debug, Clone, PartialEq)]
-    struct ShoppingCart {
-        items: HashMap<String, u32>, // item_id -> quantity
-        total: u32,
-        max_items: u32,
-    }
-    
-    impl ShoppingCart {
-        fn new() -> Self {
-            Self {
-                items: HashMap::new(),
-                total: 0,
-                max_items: 10,
-            }
-        }
-        
-        fn can_add_item(&self) -> bool {
-            self.total < self.max_items
-        }
-        
-        fn has_items(&self) -> bool {
-            !self.items.is_empty()
-        }
-    }
-    
+fn test_counter_state_machine() {
+    // Define your state model
     #[derive(Clone, Debug)]
-    struct AddItemInput {
-        item_id: String,
-        quantity: u32,
+    struct Counter {
+        value: i32,
+        max: i32,
     }
-    
-    impl std::fmt::Display for AddItemInput {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}x{}", self.quantity, self.item_id)
+
+    // Define command inputs
+    #[derive(Clone, Debug)]
+    struct IncrementInput { amount: i32 }
+
+    impl std::fmt::Display for IncrementInput {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "+{}", self.amount)
         }
     }
-    
+
     let mut generator = ActionGenerator::new();
-    
-    // Add item command - only available when cart isn't full
-    let add_cmd: Command<AddItemInput, bool, ShoppingCart, bool> = Command::new(
-        "add_item".to_string(),
-        |state: &ShoppingCart| {
-            if state.can_add_item() {
-                Some(Gen::new(|_size, seed| {
-                    let items = ["book", "phone", "laptop"];
-                    let (item_idx, new_seed) = seed.next_bounded(items.len() as u64);
-                    let (quantity, _) = new_seed.next_bounded(3);
-                    Tree::singleton(AddItemInput {
-                        item_id: items[item_idx as usize].to_string(),
-                        quantity: (quantity + 1) as u32,
-                    })
-                }))
+
+    // Define increment command with precondition, update, and postcondition
+    let increment: Command<IncrementInput, i32, Counter, i32> = Command::new(
+        "increment".to_string(),
+        |state: &Counter| {
+            if state.value < state.max {
+                Some(Gen::constant(IncrementInput { amount: 1 }))
             } else {
-                None // Command not available when cart is full
+                None // Can't increment when at max
             }
         },
-        |input: &AddItemInput, state: &mut ShoppingCart| {
-            let previous_quantity = state.items.get(&input.item_id).unwrap_or(&0);
-            let new_quantity = previous_quantity + input.quantity;
-            state.items.insert(input.item_id.clone(), new_quantity);
-            state.total += input.quantity;
-            true // Command succeeded
-        },
-        |_input: &AddItemInput, result: &bool, _state: &ShoppingCart| {
-            *result // Should always succeed when preconditions met
+        |input: IncrementInput| input.amount,
+    )
+    .with_require(|state: &Counter, input: &IncrementInput| {
+        state.value + input.amount <= state.max
+    })
+    .with_update(|state: &mut Counter, input: &IncrementInput, _output| {
+        state.value += input.amount;
+    })
+    .with_ensure(|old: &Counter, new: &Counter, input: &IncrementInput, output: &i32| {
+        if new.value != old.value + input.amount {
+            Err("Value not updated correctly".to_string())
+        } else if *output != input.amount {
+            Err("Wrong output".to_string())
+        } else {
+            Ok(())
         }
-    );
-    
-    // Remove item command - only available when cart has items
-    let remove_cmd: Command<String, bool, ShoppingCart, bool> = Command::new(
-        "remove_item".to_string(),
-        |state: &ShoppingCart| {
-            if state.has_items() {
-                let available_items: Vec<String> = state.items.keys().cloned().collect();
-                Some(Gen::new(move |_size, seed| {
-                    let (idx, _) = seed.next_bounded(available_items.len() as u64);
-                    Tree::singleton(available_items[idx as usize].clone())
-                }))
-            } else {
-                None
-            }
-        },
-        |item_id: &String, state: &mut ShoppingCart| {
-            if let Some(quantity) = state.items.get(item_id).copied() {
-                state.items.remove(item_id);
-                state.total -= quantity;
-                true
-            } else {
-                false
-            }
-        },
-        |_input: &String, result: &bool, _state: &ShoppingCart| {
-            *result // Should succeed when item exists
-        }
-    );
-    
-    generator.add_command(add_cmd);
-    generator.add_command(remove_cmd);
-    
-    let prop = for_all(
-        Gen::<Vec<Action<ShoppingCart>>>::actions(generator, ShoppingCart::new()),
-        |actions| {
-            let mut state = ShoppingCart::new();
-            for action in actions {
-                // Execute the action and verify the result
-                if !action.execute(&mut state) {
-                    return false; // Action failed unexpectedly
-                }
-                
-                // Verify state invariants after each action
-                let total_items: u32 = state.items.values().sum();
-                if total_items != state.total {
-                    return false; // State inconsistency
-                }
-                
-                if state.total > state.max_items {
-                    return false; // Violated capacity constraint
-                }
-            }
-            true
-        }
-    );
-    
-    assert!(matches!(prop.run(&Config::default()), TestResult::Pass { .. }));
+    });
+
+    generator.add_command(increment);
+
+    // Sequential testing
+    let initial = Counter { value: 0, max: 100 };
+    let sequential = generator.generate_sequential(initial.clone(), 10);
+    execute_sequential(initial.clone(), sequential).unwrap();
+
+    // Parallel testing with linearizability checking
+    let parallel = generator.generate_parallel(initial.clone(), 2, 3);
+    execute_parallel(initial, parallel).unwrap();
 }
 ```
+
+**For more details, see:**
+- Tutorial: `hedgehog-core/docs/state-machine-testing.md`
+- API Reference: `hedgehog-core/docs/api-reference.md`
 
 ### Targeted Property Testing
 
