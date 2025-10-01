@@ -4,14 +4,15 @@
 
 ✅ **Core Features Complete**
 - Distribution shaping and range system
-- Variable name tracking in failure reporting  
+- Variable name tracking in failure reporting
 - Derive macros for custom types
 - Comprehensive property testing API
-- State machine testing utilities
+- Sequential state machine testing utilities
+- Parallel state machine testing with linearizability checking
 - Function generators for higher-order function testing
 - Example integration with configurable strategies
 - Dictionary support - domain-specific token injection (web domains, HTTP codes, SQL keywords, etc.)
-- Parallel testing - multi-threaded property execution with race condition detection
+- Parallel property testing - multi-threaded property execution with race condition detection
 - Targeted property-based testing - search-guided generation using simulated annealing
 
 ✅ **Meta Testing & Quality Assurance Complete**

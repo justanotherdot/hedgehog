@@ -45,15 +45,39 @@ where
 
 generate_sequential(&self, initial_state: State, num_actions: usize) -> Sequential<State, ()>
 where State: Clone
+
+generate_parallel(
+    &self,
+    initial_state: State,
+    prefix_actions: usize,
+    branch_actions: usize
+) -> Parallel<State, ()>
+where State: Clone
 ```
 
 ### `Sequential<State, M>`
 
-A sequence of actions to execute.
+A sequence of actions to execute sequentially.
 
 **Fields:**
 ```rust
 pub actions: Vec<Box<dyn ActionTrait<State, M>>>
+```
+
+### `Parallel<State, M>`
+
+A parallel test with prefix and two concurrent branches for linearizability testing.
+
+**Fields:**
+```rust
+pub prefix: Vec<Box<dyn ActionTrait<State, M>>>   // Executed sequentially first
+pub branch1: Vec<Box<dyn ActionTrait<State, M>>>  // Executed concurrently
+pub branch2: Vec<Box<dyn ActionTrait<State, M>>>  // Executed concurrently
+```
+
+**Methods:**
+```rust
+Parallel::new() -> Self  // Creates empty parallel test
 ```
 
 ### `Gen<T>`
@@ -89,6 +113,26 @@ execute_sequential<State>(
 ) -> Result<(), String>
 where State: Clone
 ```
+
+### `execute_parallel`
+
+Executes a parallel test with linearizability checking.
+
+```rust
+execute_parallel<State>(
+    initial_state: State,
+    parallel: Parallel<State, ()>
+) -> Result<(), String>
+where State: Clone + Send + Sync + 'static
+```
+
+**Process:**
+1. Executes prefix actions sequentially
+2. Executes both branches concurrently in separate threads
+3. Generates all C(n+m, n) possible interleavings
+4. Verifies at least one interleaving satisfies all postconditions
+
+**Performance:** Exponential in branch size. Keep branches small (2-5 actions).
 
 ## Callback Types
 

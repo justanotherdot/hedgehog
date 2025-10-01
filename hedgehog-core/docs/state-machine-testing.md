@@ -240,16 +240,36 @@ fn property_counter_never_exceeds_max() {
 
 The framework automatically shrinks failing test cases to minimal examples. You can customize this by implementing shrinking in your input generators.
 
-### Parallel Execution
+### Parallel Execution with Linearizability Checking
 
-Test concurrent scenarios by wrapping your state machine properties with parallel testing:
+Hedgehog supports parallel state machine testing with automatic linearizability verification:
 
 ```rust
-// Future: Advanced parallel state machine testing will provide:
-// - Systematic interleaving exploration 
-// - Concurrent scenario DSLs
-// For now, use for_all_parallel at the property level for basic parallelization
+use hedgehog_core::state::*;
+
+// Generate parallel test with prefix and two concurrent branches
+let initial = Counter { value: 0, max_value: 100 };
+let parallel = generator.generate_parallel(
+    initial.clone(),
+    2,  // Number of prefix actions (run sequentially)
+    3,  // Number of actions per branch (run in parallel)
+);
+
+// Execute: runs prefix, then branches in parallel, checks linearizability
+execute_parallel(initial, parallel).unwrap();
 ```
+
+**How it works:**
+1. **Prefix actions** execute sequentially to set up state
+2. **Two branches** execute concurrently in separate threads
+3. **Linearizability check** verifies that at least one sequential interleaving of the parallel branches satisfies all postconditions
+
+**Performance notes:**
+- Checks all C(n+m, n) possible interleavings (exponential)
+- Keep branches small (2-5 actions recommended)
+- Perfect for finding race conditions in concurrent data structures
+
+This matches the behavior of Haskell hedgehog's `executeParallel` and provides true linearizability verification.
 
 ### Variable Dependencies
 

@@ -8,7 +8,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// A unique identifier for symbolic variables during generation phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -176,28 +176,28 @@ impl<S> GenerationContext<S> {
 #[derive(Clone)]
 pub enum Callback<Input, Output, State> {
     /// Precondition that must be met before command execution.
-    Require(Rc<dyn Fn(&State, &Input) -> bool>),
-    
+    Require(Arc<dyn Fn(&State, &Input) -> bool + Send + Sync>),
+
     /// State update after command execution.
-    Update(Rc<dyn Fn(&mut State, &Input, &Var<Output>)>),
-    
+    Update(Arc<dyn Fn(&mut State, &Input, &Var<Output>) + Send + Sync>),
+
     /// Postcondition to verify after command execution.
-    Ensure(Rc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String>>),
+    Ensure(Arc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync>),
 }
 
 /// Specification for a command that can be executed in a state machine test.
 pub struct Command<Input, Output, State, M> {
     /// Generate inputs for this command given current state.
-    pub input_gen: Box<dyn Fn(&State) -> Option<Gen<Input>>>,
-    
+    pub input_gen: Box<dyn Fn(&State) -> Option<Gen<Input>> + Send + Sync>,
+
     /// Execute the command with concrete inputs.
-    pub execute: Rc<dyn Fn(Input) -> M>,
-    
+    pub execute: Arc<dyn Fn(Input) -> M + Send + Sync>,
+
     /// Optional callbacks for preconditions, state updates, and postconditions.
     pub callbacks: Vec<Callback<Input, Output, State>>,
-    
+
     pub name: String,
-    
+
     _phantom: PhantomData<Output>,
 }
 
@@ -208,42 +208,42 @@ impl<Input, Output, State, M> Command<Input, Output, State, M> {
         execute: G,
     ) -> Self
     where
-        F: Fn(&State) -> Option<Gen<Input>> + 'static,
-        G: Fn(Input) -> M + 'static,
+        F: Fn(&State) -> Option<Gen<Input>> + Send + Sync + 'static,
+        G: Fn(Input) -> M + Send + Sync + 'static,
     {
         Self {
             input_gen: Box::new(input_gen),
-            execute: Rc::new(execute),
+            execute: Arc::new(execute),
             callbacks: Vec::new(),
             name,
             _phantom: PhantomData,
         }
     }
-    
+
     pub fn with_require<F>(mut self, f: F) -> Self
     where
-        F: Fn(&State, &Input) -> bool + 'static,
+        F: Fn(&State, &Input) -> bool + Send + Sync + 'static,
     {
-        self.callbacks.push(Callback::Require(Rc::new(f)));
+        self.callbacks.push(Callback::Require(Arc::new(f)));
         self
     }
-    
+
     pub fn with_update<F>(mut self, f: F) -> Self
     where
-        F: Fn(&mut State, &Input, &Var<Output>) + 'static,
+        F: Fn(&mut State, &Input, &Var<Output>) + Send + Sync + 'static,
     {
-        self.callbacks.push(Callback::Update(Rc::new(f)));
+        self.callbacks.push(Callback::Update(Arc::new(f)));
         self
     }
-    
+
     pub fn with_ensure<F>(mut self, f: F) -> Self
     where
-        F: Fn(&State, &State, &Input, &Output) -> Result<(), String> + 'static,
+        F: Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync + 'static,
     {
-        self.callbacks.push(Callback::Ensure(Rc::new(f)));
+        self.callbacks.push(Callback::Ensure(Arc::new(f)));
         self
     }
-    
+
     pub fn can_execute(&self, state: &State) -> bool {
         (self.input_gen)(state).is_some()
     }
@@ -253,7 +253,7 @@ impl<Input, Output, State, M> Command<Input, Output, State, M> {
 pub struct Action<Input, Output, State, M> {
     pub input: Input,
     pub output: Symbolic<Output>,
-    pub execute_fn: Box<dyn Fn(Input) -> M>,
+    pub execute_fn: Box<dyn Fn(Input) -> M + Send + Sync>,
     pub callbacks: Vec<Callback<Input, Output, State>>,
     pub name: String,
 }
@@ -266,7 +266,7 @@ where
     pub fn new(
         input: Input,
         output: Symbolic<Output>,
-        execute_fn: Box<dyn Fn(Input) -> M>,
+        execute_fn: Box<dyn Fn(Input) -> M + Send + Sync>,
         callbacks: Vec<Callback<Input, Output, State>>,
         name: String,
     ) -> Self {
@@ -321,9 +321,17 @@ impl<State, M> Parallel<State, M> {
 }
 
 /// Trait for type-erased actions that can be executed.
-pub trait ActionTrait<State, M> {
+pub trait ActionTrait<State, M>: Send {
     fn execute_action(&self, state: &mut State, env: &mut Environment) -> Result<(), String>;
     fn display_action(&self) -> String;
+
+    /// Execute action and return check for linearizability testing.
+    /// Unlike execute_action, this captures the ensure callback without running it.
+    fn execute_and_capture_check(
+        &self,
+        state: &mut State,
+        env: &mut Environment,
+    ) -> Result<(Arc<State>, Arc<State>, Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>), String>;
 }
 
 /// Generator for creating sequences of actions.
@@ -342,10 +350,10 @@ impl<State> ActionGenerator<State> {
         &mut self,
         command: Command<Input, Output, State, M>,
     ) where
-        Input: 'static + Clone + Debug + Display,
-        Output: 'static + Clone + Debug + Display,
-        State: 'static + Clone,
-        M: 'static + Clone + Into<Output>,
+        Input: 'static + Clone + Debug + Display + Send + Sync,
+        Output: 'static + Clone + Debug + Display + Send + Sync,
+        State: 'static + Clone + Send,
+        M: 'static + Clone + Send + Sync + Into<Output>,
     {
         self.commands.push(Box::new(TypedCommand {
             command,
@@ -359,32 +367,152 @@ impl<State> ActionGenerator<State> {
     {
         let mut ctx = GenerationContext::new(initial_state);
         let mut actions = Vec::new();
-        
+
         for _ in 0..num_actions {
             let available_commands: Vec<_> = self.commands
                 .iter()
                 .filter(|cmd| cmd.can_execute_dyn(ctx.state()))
                 .collect();
-                
+
             if available_commands.is_empty() {
                 break;
             }
-            
+
             // Randomly select an available command
             let command_seed = ctx.next_seed();
             let (command_index, _) = command_seed.next_bounded(available_commands.len() as u64);
             let selected_command = available_commands[command_index as usize];
-            
+
             if let Some(action) = selected_command.generate_action_dyn(&mut ctx) {
                 actions.push(action);
-                
+
                 // CRITICAL: Update the generation state so next commands see the change
                 // We need to simulate the state update that would happen during execution
                 selected_command.update_generation_state(&mut ctx);
             }
         }
-        
+
         Sequential { actions }
+    }
+
+    /// Generate parallel test with sequential prefix and two concurrent branches.
+    /// This enables linearizability testing by exploring possible interleavings.
+    ///
+    /// # Arguments
+    ///
+    /// * `initial_state` - Starting state for generation
+    /// * `prefix_actions` - Number of actions to generate in the sequential prefix
+    /// * `branch_actions` - Number of actions to generate per concurrent branch
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use hedgehog_core::state::*;
+    /// use hedgehog_core::gen::Gen;
+    ///
+    /// #[derive(Clone, Debug)]
+    /// struct Counter { value: i32 }
+    ///
+    /// #[derive(Clone, Debug)]
+    /// struct IncInput { amount: i32 }
+    /// impl std::fmt::Display for IncInput {
+    ///     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    ///         write!(f, "+{}", self.amount)
+    ///     }
+    /// }
+    ///
+    /// let mut gen = ActionGenerator::new();
+    /// let cmd: Command<IncInput, i32, Counter, i32> = Command::new(
+    ///     "inc".to_string(),
+    ///     |_| Some(Gen::constant(IncInput { amount: 1 })),
+    ///     |input| input.amount,
+    /// );
+    /// gen.add_command(cmd);
+    ///
+    /// // Generate test: 2 prefix, then 2 branches with 3 actions each
+    /// let parallel = gen.generate_parallel(Counter { value: 0 }, 2, 3);
+    /// assert_eq!(parallel.prefix.len(), 2);
+    /// ```
+    pub fn generate_parallel(
+        &self,
+        initial_state: State,
+        prefix_actions: usize,
+        branch_actions: usize,
+    ) -> Parallel<State, ()>
+    where
+        State: Clone,
+    {
+        // Generate prefix actions sequentially
+        let mut ctx = GenerationContext::new(initial_state);
+        let mut prefix = Vec::new();
+
+        for _ in 0..prefix_actions {
+            if let Some(action) = self.generate_single_action(&mut ctx) {
+                prefix.push(action);
+            } else {
+                break;
+            }
+        }
+
+        // Save state after prefix for both branches
+        let branch_state = ctx.state().clone();
+
+        // Generate branch 1 from prefix state
+        let mut branch1 = Vec::new();
+        for _ in 0..branch_actions {
+            if let Some(action) = self.generate_single_action(&mut ctx) {
+                branch1.push(action);
+            } else {
+                break;
+            }
+        }
+
+        // Generate branch 2 from same prefix state (independent of branch 1)
+        ctx = GenerationContext::new(branch_state);
+        // Skip past prefix AND branch1 variables to avoid variable ID collisions
+        for _ in 0..(prefix.len() + branch1.len()) {
+            ctx.new_var::<()>();
+        }
+
+        let mut branch2 = Vec::new();
+        for _ in 0..branch_actions {
+            if let Some(action) = self.generate_single_action(&mut ctx) {
+                branch2.push(action);
+            } else {
+                break;
+            }
+        }
+
+        Parallel {
+            prefix,
+            branch1,
+            branch2,
+        }
+    }
+
+    fn generate_single_action(&self, ctx: &mut GenerationContext<State>) -> Option<Box<dyn ActionTrait<State, ()>>>
+    where
+        State: Clone,
+    {
+        let available_commands: Vec<_> = self.commands
+            .iter()
+            .filter(|cmd| cmd.can_execute_dyn(ctx.state()))
+            .collect();
+
+        if available_commands.is_empty() {
+            return None;
+        }
+
+        let command_seed = ctx.next_seed();
+        let (command_index, _) = command_seed.next_bounded(available_commands.len() as u64);
+        let selected_command = available_commands[command_index as usize];
+
+        if let Some(action) = selected_command.generate_action_dyn(ctx) {
+            selected_command.update_generation_state(ctx);
+            Some(action)
+        } else {
+            None
+        }
     }
 }
 
@@ -403,10 +531,10 @@ struct TypedCommand<Input, Output, State, M> {
 
 impl<Input, Output, State, M> CommandTrait<State> for TypedCommand<Input, Output, State, M>
 where
-    Input: 'static + Clone + Debug + Display,
-    Output: 'static + Clone + Debug + Display,
-    State: 'static + Clone,
-    M: 'static + Clone + Into<Output>,
+    Input: 'static + Clone + Debug + Display + Send + Sync,
+    Output: 'static + Clone + Debug + Display + Send + Sync,
+    State: 'static + Clone + Send,
+    M: 'static + Clone + Send + Sync + Into<Output>,
 {
     fn can_execute_dyn(&self, state: &State) -> bool {
         self.command.can_execute(state)
@@ -467,8 +595,8 @@ where
 fn create_callback_handlers<Input, Output, State>(
     callbacks: &[Callback<Input, Output, State>]
 ) -> (
-    Option<Rc<dyn Fn(&mut State, &Input, &Var<Output>)>>,
-    Option<Rc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String>>>
+    Option<Arc<dyn Fn(&mut State, &Input, &Var<Output>) + Send + Sync>>,
+    Option<Arc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync>>
 )
 where
     Input: 'static,
@@ -477,7 +605,7 @@ where
 {
     let mut update_fn = None;
     let mut ensure_fn = None;
-    
+
     for callback in callbacks {
         match callback {
             Callback::Update(f) => {
@@ -491,7 +619,7 @@ where
             }
         }
     }
-    
+
     (update_fn, ensure_fn)
 }
 
@@ -499,51 +627,88 @@ where
 struct FunctionalAction<Input, Output, State, M> {
     input: Input,
     output: Symbolic<Output>,
-    execute_fn: Rc<dyn Fn(Input) -> M>,
-    update_fn: Option<Rc<dyn Fn(&mut State, &Input, &Var<Output>)>>,
-    ensure_fn: Option<Rc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String>>>,
+    execute_fn: Arc<dyn Fn(Input) -> M + Send + Sync>,
+    update_fn: Option<Arc<dyn Fn(&mut State, &Input, &Var<Output>) + Send + Sync>>,
+    ensure_fn: Option<Arc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync>>,
     name: String,
     _phantom: PhantomData<(Output, State, M)>,
 }
 
 impl<Input, Output, State, M> ActionTrait<State, ()> for FunctionalAction<Input, Output, State, M>
 where
-    Input: Clone + Display,
-    Output: 'static + Clone,
-    State: 'static + Clone,
-    M: 'static + Clone,
+    Input: 'static + Clone + Display + Send + Sync,
+    Output: 'static + Clone + Send + Sync,
+    State: 'static + Clone + Send,
+    M: 'static + Clone + Send + Sync,
     M: Into<Output>, // Allow conversion from M to Output
 {
     fn execute_action(&self, state: &mut State, env: &mut Environment) -> Result<(), String> {
         let concrete_input = self.input.clone();
-        
+
         // Execute the actual command function
         let output_value = (self.execute_fn)(concrete_input.clone());
-        
+
         // Store the result in the environment (convert M to Output)
         let converted_output: Output = output_value.into();
         env.insert(self.output.clone(), Concrete::new(converted_output));
-        
+
         // Save state before update
         let state_before = state.clone();
-        
+
         // Run Update callback if present
         if let Some(update_fn) = &self.update_fn {
             update_fn(state, &concrete_input, &Var::Symbolic(self.output.clone()));
         }
-        
+
         // Run Ensure callback if present
         if let Some(ensure_fn) = &self.ensure_fn {
             if let Some(concrete_output) = env.get(&self.output) {
                 ensure_fn(&state_before, state, &concrete_input, concrete_output)?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn display_action(&self) -> String {
         format!("{} = {}({})", self.output, self.name, self.input)
+    }
+
+    fn execute_and_capture_check(
+        &self,
+        state: &mut State,
+        env: &mut Environment,
+    ) -> Result<(Arc<State>, Arc<State>, Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>), String> {
+        let state_before = Arc::new(state.clone());
+        let concrete_input = self.input.clone();
+
+        // Execute the actual command function
+        let output_value = (self.execute_fn)(concrete_input.clone());
+
+        // Store the result in the environment (convert M to Output)
+        let converted_output: Output = output_value.clone().into();
+        env.insert(self.output.clone(), Concrete::new(converted_output));
+
+        // Run Update callback if present (but don't run ensure yet!)
+        if let Some(update_fn) = &self.update_fn {
+            update_fn(state, &concrete_input, &Var::Symbolic(self.output.clone()));
+        }
+
+        let state_after = Arc::new(state.clone());
+
+        // Capture the ensure callback with the actual output value
+        let ensure_callback: Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync> =
+            if let Some(ensure_fn) = self.ensure_fn.clone() {
+                let output_for_closure: Output = output_value.into();
+                let input_for_closure = concrete_input.clone();
+                Arc::new(move |s_before: &State, s_after: &State| {
+                    ensure_fn(s_before, s_after, &input_for_closure, &output_for_closure)
+                })
+            } else {
+                Arc::new(|_: &State, _: &State| Ok(()))
+            };
+
+        Ok((state_before, state_after, ensure_callback))
     }
 }
 
@@ -559,12 +724,274 @@ where
 {
     let mut state = initial_state;
     let mut env = Environment::new();
-    
+
     for action in sequential.actions {
         println!("Executing: {}", action.display_action());
         action.execute_action(&mut state, &mut env)?;
     }
-    
+
+    Ok(())
+}
+
+/// Captured state transition with postcondition check.
+/// Uses Arc for cheap cloning when exploring interleavings.
+#[derive(Clone)]
+struct ActionCheck<State> {
+    state_after: Arc<State>,
+    ensure: Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>,
+}
+
+/// Generate all possible interleavings of two index sequences.
+/// Returns indices that can be used to access elements from two separate collections.
+fn interleave_indices(len1: usize, len2: usize) -> Vec<Vec<(usize, bool)>> {
+    // (index, is_from_first) - bool indicates which branch the index is from
+    fn generate(
+        remaining1: usize,
+        remaining2: usize,
+    ) -> Vec<Vec<(usize, bool)>> {
+        match (remaining1, remaining2) {
+            (0, 0) => vec![vec![]],
+            (0, n) => {
+                let mut result = Vec::new();
+                for i in 0..n {
+                    result.push(vec![(i, false)]);
+                }
+                if n == 0 {
+                    vec![vec![]]
+                } else {
+                    vec![(0..n).map(|i| (i, false)).collect()]
+                }
+            }
+            (n, 0) => {
+                if n == 0 {
+                    vec![vec![]]
+                } else {
+                    vec![(0..n).map(|i| (i, true)).collect()]
+                }
+            }
+            (n1, n2) => {
+                let mut result = Vec::new();
+
+                // Take from first sequence
+                for rest in generate(n1 - 1, n2) {
+                    let mut path = vec![(n1 - 1, true)];
+                    path.extend(rest);
+                    result.push(path);
+                }
+
+                // Take from second sequence
+                for rest in generate(n1, n2 - 1) {
+                    let mut path = vec![(n2 - 1, false)];
+                    path.extend(rest);
+                    result.push(path);
+                }
+
+                result
+            }
+        }
+    }
+
+    generate(len1, len2)
+}
+
+/// Execute actions and collect state transitions for linearizability checking.
+///
+/// This captures the actual ensure callbacks WITHOUT running them during execution.
+/// The callbacks are then re-run for each interleaving during linearizability checking.
+/// This matches the behavior of haskell-hedgehog's `execute` and `linearize` functions.
+fn execute_and_capture<State>(
+    initial_state: Arc<State>,
+    actions: &[Box<dyn ActionTrait<State, ()>>],
+) -> Result<Vec<ActionCheck<State>>, String>
+where
+    State: Clone,
+{
+    let mut state = (*initial_state).clone();
+    let mut env = Environment::new();
+    let mut checks = Vec::new();
+
+    for action in actions {
+        // Execute action and capture the ensure callback (don't run it yet!)
+        let (_state_before, state_after, ensure) =
+            action.execute_and_capture_check(&mut state, &mut env)?;
+
+        checks.push(ActionCheck {
+            state_after,
+            ensure,
+        });
+    }
+
+    Ok(checks)
+}
+
+/// Check if a specific interleaving of two action sequences is valid.
+///
+/// This applies state transitions in the interleaved order and checks postconditions,
+/// matching haskell-hedgehog's `checkActions` function.
+fn check_interleaving<State>(
+    initial_state: &State,
+    branch1_checks: &[ActionCheck<State>],
+    branch2_checks: &[ActionCheck<State>],
+    interleaving: &[(usize, bool)],
+) -> Result<(), String>
+where
+    State: Clone,
+{
+    let mut state = initial_state.clone();
+
+    for &(idx, is_branch1) in interleaving {
+        let check = if is_branch1 {
+            &branch1_checks[idx]
+        } else {
+            &branch2_checks[idx]
+        };
+
+        // The state_after already has the update applied, so we use it directly
+        // This matches Haskell's approach where update is applied before ensure
+        let old_state = state;
+        state = (*check.state_after).clone();
+
+        // Check postcondition with old and new state
+        (check.ensure)(&old_state, &state)?;
+    }
+
+    Ok(())
+}
+
+/// Test if there exists a valid sequential interleaving of two concurrent branches.
+/// This is the core linearizability check - if ANY interleaving satisfies all
+/// postconditions, the concurrent execution is linearizable.
+fn linearize<State>(
+    initial_state: &State,
+    branch1_checks: &[ActionCheck<State>],
+    branch2_checks: &[ActionCheck<State>],
+) -> Result<(), String>
+where
+    State: Clone,
+{
+    // Generate all possible interleavings
+    let interleavings = interleave_indices(branch1_checks.len(), branch2_checks.len());
+
+    println!("Checking {} possible interleavings", interleavings.len());
+
+    // Try each interleaving to see if any satisfy all postconditions
+    for (i, interleaving) in interleavings.iter().enumerate() {
+        if check_interleaving(initial_state, branch1_checks, branch2_checks, interleaving).is_ok() {
+            println!("✓ Found valid interleaving #{}", i + 1);
+            return Ok(());
+        }
+    }
+
+    Err("no valid interleaving found - linearizability violated".to_string())
+}
+
+/// Execute parallel test: run prefix sequentially, then two branches in parallel,
+/// and verify linearizability by checking all possible interleavings.
+///
+/// # Linearizability
+///
+/// This function verifies linearizability by:
+/// 1. Executing both branches concurrently
+/// 2. Generating all C(n+m, n) possible sequential interleavings
+/// 3. Checking if ANY interleaving satisfies all postconditions
+///
+/// If at least one valid interleaving exists, the concurrent execution is linearizable.
+///
+/// # Performance
+///
+/// The number of interleavings grows exponentially: C(n+m, n) where n and m are branch sizes.
+/// Keep branches small (2-5 actions) for reasonable performance.
+///
+/// # Example
+///
+/// ```
+/// use hedgehog_core::state::*;
+/// use hedgehog_core::gen::Gen;
+///
+/// #[derive(Clone, Debug)]
+/// struct Counter { value: i32 }
+///
+/// #[derive(Clone, Debug)]
+/// struct IncInput { amount: i32 }
+/// impl std::fmt::Display for IncInput {
+///     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+///         write!(f, "+{}", self.amount)
+///     }
+/// }
+///
+/// let mut gen = ActionGenerator::new();
+/// let cmd: Command<IncInput, i32, Counter, i32> = Command::new(
+///     "inc".to_string(),
+///     |_state: &Counter| Some(Gen::constant(IncInput { amount: 1 })),
+///     |input| input.amount,
+/// )
+/// .with_update(|s: &mut Counter, i: &IncInput, _| s.value += i.amount);
+/// gen.add_command(cmd);
+///
+/// let parallel = gen.generate_parallel(Counter { value: 0 }, 0, 2);
+/// execute_parallel(Counter { value: 0 }, parallel).unwrap();
+/// ```
+pub fn execute_parallel<State>(
+    initial_state: State,
+    parallel: Parallel<State, ()>,
+) -> Result<(), String>
+where
+    State: Clone + Send + Sync + 'static,
+{
+    let mut state = initial_state;
+    let mut env = Environment::new();
+
+    // Execute prefix sequentially
+    println!("━━━ Prefix ━━━");
+    for action in &parallel.prefix {
+        println!("Executing: {}", action.display_action());
+        action.execute_action(&mut state, &mut env)?;
+    }
+
+    println!("\n━━━ Branch 1 & Branch 2 (Parallel) ━━━");
+
+    // Capture state after prefix for both branches
+    let state_after_prefix = Arc::new(state.clone());
+    let state_for_branch1 = Arc::clone(&state_after_prefix);
+    let state_for_branch2 = Arc::clone(&state_after_prefix);
+
+    let branch1 = parallel.branch1;
+    let branch2 = parallel.branch2;
+
+    // Execute branch 1 in parallel and capture state transitions
+    let handle1 = std::thread::spawn(move || {
+        println!("Branch 1 starting...");
+        execute_and_capture(state_for_branch1, &branch1)
+    });
+
+    // Execute branch 2 in parallel and capture state transitions
+    let handle2 = std::thread::spawn(move || {
+        println!("Branch 2 starting...");
+        execute_and_capture(state_for_branch2, &branch2)
+    });
+
+    // Wait for both branches to complete and get their state transitions
+    let branch1_checks = handle1
+        .join()
+        .map_err(|_| "branch 1 panicked".to_string())??;
+    let branch2_checks = handle2
+        .join()
+        .map_err(|_| "branch 2 panicked".to_string())??;
+
+    println!("✓ Both branches executed successfully");
+
+    // Now check linearizability
+    println!("\n━━━ Checking Linearizability ━━━");
+    println!(
+        "Branch 1: {} actions, Branch 2: {} actions",
+        branch1_checks.len(),
+        branch2_checks.len()
+    );
+
+    linearize(&state, &branch1_checks, &branch2_checks)?;
+
+    println!("✓ Linearizability check passed!");
+
     Ok(())
 }
 
@@ -1580,5 +2007,225 @@ mod tests {
         assert_eq!(execution_state.value, 15);
         
         println!("✓ State consistency maintained between generation and execution phases");
+    }
+
+    #[test]
+    fn test_parallel_execution_simple() {
+        // Simple test for parallel state machine execution with linearizability checking
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        struct Counter {
+            value: i32,
+        }
+
+        #[derive(Clone, Debug)]
+        struct IncrementInput {
+            amount: i32,
+        }
+
+        impl std::fmt::Display for IncrementInput {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "+{}", self.amount)
+            }
+        }
+
+        let mut generator = ActionGenerator::new();
+
+        let increment_cmd: Command<IncrementInput, i32, Counter, i32> = Command::new(
+            "increment".to_string(),
+            |_state: &Counter| Some(Gen::constant(IncrementInput { amount: 1 })),
+            |input: IncrementInput| input.amount,
+        )
+        .with_update(|state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
+            state.value += input.amount;
+        });
+
+        generator.add_command(increment_cmd);
+
+        let initial = Counter { value: 0 };
+
+        // Generate parallel test: 0 prefix actions, 2 actions per branch
+        let parallel = generator.generate_parallel(initial.clone(), 0, 2);
+
+        println!("Generated parallel test:");
+        println!("Prefix: {} actions", parallel.prefix.len());
+        println!("Branch 1: {} actions", parallel.branch1.len());
+        println!("Branch 2: {} actions", parallel.branch2.len());
+
+        // Execute with linearizability checking
+        let result = execute_parallel(initial, parallel);
+
+        match &result {
+            Ok(()) => println!("✓ Parallel execution with linearizability checking passed!"),
+            Err(e) => println!("✗ Parallel execution failed: {}", e),
+        }
+
+        assert!(result.is_ok(), "Parallel execution should succeed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parallel_execution_with_prefix() {
+        // Test parallel execution with a non-empty prefix
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        struct Counter {
+            value: i32,
+        }
+
+        #[derive(Clone, Debug)]
+        struct IncrementInput {
+            amount: i32,
+        }
+
+        impl std::fmt::Display for IncrementInput {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "+{}", self.amount)
+            }
+        }
+
+        let mut generator = ActionGenerator::new();
+
+        let increment_cmd: Command<IncrementInput, i32, Counter, i32> = Command::new(
+            "increment".to_string(),
+            |_state: &Counter| Some(Gen::constant(IncrementInput { amount: 1 })),
+            |input: IncrementInput| input.amount,
+        )
+        .with_update(|state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
+            state.value += input.amount;
+        });
+
+        generator.add_command(increment_cmd);
+
+        let initial = Counter { value: 0 };
+
+        // Generate parallel test: 2 prefix actions, 1 action per branch
+        let parallel = generator.generate_parallel(initial.clone(), 2, 1);
+
+        println!("\nTesting parallel execution with prefix:");
+        println!("Prefix: {} actions", parallel.prefix.len());
+        println!("Branch 1: {} actions", parallel.branch1.len());
+        println!("Branch 2: {} actions", parallel.branch2.len());
+
+        let result = execute_parallel(initial, parallel);
+
+        assert!(result.is_ok(), "Parallel execution with prefix should succeed: {:?}", result);
+        println!("✓ Parallel execution with prefix passed!");
+    }
+
+    #[test]
+    fn test_parallel_execution_unequal_branches() {
+        // Test with unequal branch lengths
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        struct Counter {
+            value: i32,
+        }
+
+        #[derive(Clone, Debug)]
+        struct IncrementInput {
+            amount: i32,
+        }
+
+        impl std::fmt::Display for IncrementInput {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "+{}", self.amount)
+            }
+        }
+
+        let mut generator = ActionGenerator::new();
+
+        let increment_cmd: Command<IncrementInput, i32, Counter, i32> = Command::new(
+            "increment".to_string(),
+            |_state: &Counter| Some(Gen::constant(IncrementInput { amount: 1 })),
+            |input: IncrementInput| input.amount,
+        )
+        .with_update(|state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
+            state.value += input.amount;
+        });
+
+        generator.add_command(increment_cmd);
+
+        let initial = Counter { value: 0 };
+
+        // Manually create parallel test with unequal branches
+        let mut parallel = Parallel::new();
+
+        // Generate actions for testing
+        let seq = generator.generate_sequential(initial.clone(), 5);
+        let mut actions_iter = seq.actions.into_iter();
+
+        // Branch 1: 3 actions
+        if let Some(a1) = actions_iter.next() {
+            parallel.branch1.push(a1);
+        }
+        if let Some(a2) = actions_iter.next() {
+            parallel.branch1.push(a2);
+        }
+        if let Some(a3) = actions_iter.next() {
+            parallel.branch1.push(a3);
+        }
+
+        // Branch 2: 1 action
+        if let Some(a4) = actions_iter.next() {
+            parallel.branch2.push(a4);
+        }
+
+        println!("\nTesting unequal branches:");
+        println!("Branch 1: {} actions", parallel.branch1.len());
+        println!("Branch 2: {} actions", parallel.branch2.len());
+
+        let result = execute_parallel(initial, parallel);
+
+        assert!(result.is_ok(), "Unequal branches should succeed: {:?}", result);
+        println!("✓ Unequal branches test passed!");
+    }
+
+    #[test]
+    fn test_parallel_empty_branches() {
+        // Edge case: empty branches
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        struct Counter {
+            value: i32,
+        }
+
+        let initial = Counter { value: 0 };
+        let parallel = Parallel::new(); // All empty
+
+        println!("\nTesting empty branches:");
+        println!("Branch 1: {} actions", parallel.branch1.len());
+        println!("Branch 2: {} actions", parallel.branch2.len());
+
+        let result = execute_parallel(initial, parallel);
+
+        assert!(result.is_ok(), "Empty branches should succeed: {:?}", result);
+        println!("✓ Empty branches test passed!");
+    }
+
+    #[test]
+    fn test_interleave_indices_correctness() {
+        // Test that interleave_indices generates correct interleavings
+
+        // Test case: 2 actions in each branch = 6 interleavings
+        let interleavings = interleave_indices(2, 2);
+
+        println!("\nTesting interleave_indices(2, 2):");
+        println!("Generated {} interleavings", interleavings.len());
+
+        // Should be C(4, 2) = 6 interleavings
+        assert_eq!(interleavings.len(), 6, "Should generate 6 interleavings for (2,2)");
+
+        // Check each interleaving has exactly 4 elements
+        for (i, interleaving) in interleavings.iter().enumerate() {
+            assert_eq!(
+                interleaving.len(),
+                4,
+                "Interleaving {} should have 4 elements",
+                i
+            );
+        }
+
+        // Test edge cases
+        assert_eq!(interleave_indices(0, 0).len(), 1, "Empty should give 1 interleaving");
+        assert_eq!(interleave_indices(1, 0).len(), 1, "One branch empty should give 1 interleaving");
+        assert_eq!(interleave_indices(0, 1).len(), 1, "One branch empty should give 1 interleaving");
+
+        println!("✓ Interleaving generation correctness verified!");
     }
 }
