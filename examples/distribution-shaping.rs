@@ -140,13 +140,10 @@ fn main() {
 
     match string_length_prop.run(&Config::default().with_tests(50)) {
         TestResult::Pass { tests_run, .. } => {
-            println!("   String length property passed {} tests", tests_run);
+            println!("   String length property passed {tests_run} tests");
         }
         TestResult::Fail { counterexample, .. } => {
-            println!(
-                "   String length property failed with: '{}'",
-                counterexample
-            );
+            println!("   String length property failed with: '{counterexample}'");
         }
         _ => println!("   Unexpected result"),
     }

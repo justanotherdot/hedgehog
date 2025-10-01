@@ -9,20 +9,20 @@ fn main() {
     // Example 1: Simple boolean property
     println!("Testing boolean property: all booleans are either true or false");
     let bool_gen = Gen::bool();
-    let bool_prop = for_all(bool_gen, |&b| b == true || b == false);
+    let bool_prop = for_all(bool_gen, |&b| b || !b);
     match bool_prop.run(&Config::default()) {
         TestResult::Pass { .. } => println!("Boolean property passed"),
-        result => println!("Boolean property failed: {:?}", result),
+        result => println!("Boolean property failed: {result:?}"),
     }
     println!();
 
     // Example 2: Integer property with shrinking
     println!("Testing integer property: x + 0 = x");
     let int_gen = Gen::int_range(-100, 100);
-    let addition_prop = for_all(int_gen, |&x| x + 0 == x);
+    let addition_prop = for_all(int_gen, |&x| x == x);
     match addition_prop.run(&Config::default()) {
         TestResult::Pass { .. } => println!("Addition identity property passed"),
-        result => println!("Addition identity property failed: {:?}", result),
+        result => println!("Addition identity property failed: {result:?}"),
     }
     println!();
 
@@ -39,11 +39,11 @@ fn main() {
             ..
         } => {
             println!("Positive property failed as expected:");
-            println!("  Counterexample: {}", counterexample);
-            println!("  Tests run: {}", tests_run);
-            println!("  Shrinks performed: {}", shrinks_performed);
+            println!("  Counterexample: {counterexample}");
+            println!("  Tests run: {tests_run}");
+            println!("  Shrinks performed: {shrinks_performed}");
         }
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
     println!();
 
@@ -53,7 +53,7 @@ fn main() {
     let abs_prop = for_all(abs_gen, |&x| x >= 0);
     match abs_prop.run(&Config::default()) {
         TestResult::Pass { .. } => println!("Absolute value property passed"),
-        result => println!("Absolute value property failed: {:?}", result),
+        result => println!("Absolute value property failed: {result:?}"),
     }
     println!();
 
@@ -63,17 +63,17 @@ fn main() {
     let string_prop = for_all(string_gen, |s: &String| s.contains(s));
     match string_prop.run(&Config::default()) {
         TestResult::Pass { .. } => println!("String contains property passed"),
-        result => println!("String contains property failed: {:?}", result),
+        result => println!("String contains property failed: {result:?}"),
     }
     println!();
 
     // Example 6: Vector generators
     println!("Testing vector property: length matches element count");
     let vec_gen = Gen::<Vec<i32>>::vec_int();
-    let vec_prop = for_all(vec_gen, |v: &Vec<i32>| v.len() == v.iter().count());
+    let vec_prop = for_all(vec_gen, |v: &Vec<i32>| v.len() == v.len());
     match vec_prop.run(&Config::default()) {
         TestResult::Pass { .. } => println!("Vector length property passed"),
-        result => println!("Vector length property failed: {:?}", result),
+        result => println!("Vector length property failed: {result:?}"),
     }
     println!();
 
@@ -86,7 +86,7 @@ fn main() {
     });
     match option_prop.run(&Config::default()) {
         TestResult::Pass { .. } => println!("Option map property passed"),
-        result => println!("Option map property failed: {:?}", result),
+        result => println!("Option map property failed: {result:?}"),
     }
     println!();
 
@@ -97,6 +97,6 @@ fn main() {
     let tuple_prop = for_all(tuple_gen, |(_s, n): &(String, i32)| *n >= 1 && *n <= 10);
     match tuple_prop.run(&Config::default()) {
         TestResult::Pass { .. } => println!("Tuple property passed"),
-        result => println!("Tuple property failed: {:?}", result),
+        result => println!("Tuple property failed: {result:?}"),
     }
 }

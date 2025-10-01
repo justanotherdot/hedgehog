@@ -93,11 +93,11 @@ impl fmt::Display for TestResult {
             } => {
                 // Show module header if available
                 if let Some(module) = module_path {
-                    writeln!(f, "━━━ {} ━━━", module)?;
+                    writeln!(f, "━━━ {module} ━━━")?;
                 }
 
                 let prop_name = property_name.as_deref().unwrap_or("property");
-                write!(f, "  ✓ {} passed {} tests.", prop_name, tests_run)
+                write!(f, "  ✓ {prop_name} passed {tests_run} tests.")
             }
             TestResult::PassWithStatistics {
                 tests_run,
@@ -107,11 +107,11 @@ impl fmt::Display for TestResult {
             } => {
                 // Show module header if available
                 if let Some(module) = module_path {
-                    writeln!(f, "━━━ {} ━━━", module)?;
+                    writeln!(f, "━━━ {module} ━━━")?;
                 }
 
                 let prop_name = property_name.as_deref().unwrap_or("property");
-                writeln!(f, "  ✓ {} passed {} tests.", prop_name, tests_run)?;
+                writeln!(f, "  ✓ {prop_name} passed {tests_run} tests.")?;
 
                 // Show classification distribution
                 if !statistics.classifications.is_empty() {
@@ -123,7 +123,7 @@ impl fmt::Display for TestResult {
                     for name in classification_names {
                         let count = statistics.classifications[name];
                         let percentage = (count as f64 / statistics.total_tests as f64) * 100.0;
-                        writeln!(f, "    {:>3.0}% {}", percentage, name)?;
+                        writeln!(f, "    {percentage:>3.0}% {name}")?;
                     }
                 }
 
@@ -161,8 +161,7 @@ impl fmt::Display for TestResult {
 
                                 writeln!(
                                     f,
-                                    "    {}: min={:.1}, max={:.1}, avg={:.1}, median={:.1}",
-                                    name, min, max, avg, median
+                                    "    {name}: min={min:.1}, max={max:.1}, avg={avg:.1}, median={median:.1}"
                                 )?;
                             }
                         }
@@ -182,14 +181,13 @@ impl fmt::Display for TestResult {
             } => {
                 // Show module header if available
                 if let Some(module) = module_path {
-                    writeln!(f, "━━━ {} ━━━", module)?;
+                    writeln!(f, "━━━ {module} ━━━")?;
                 }
 
                 let prop_name = property_name.as_deref().unwrap_or("property");
                 writeln!(
                     f,
-                    "  ✗ {} failed after {} tests and {} shrinks.",
-                    prop_name, tests_run, shrinks_performed
+                    "  ✗ {prop_name} failed after {tests_run} tests and {shrinks_performed} shrinks."
                 )?;
 
                 if !shrink_steps.is_empty() {
@@ -206,16 +204,14 @@ impl fmt::Display for TestResult {
                             } else {
                                 writeln!(f, "      │ Original: {}", step.counterexample)?;
                             }
+                        } else if let Some(ref var_name) = step.variable_name {
+                            writeln!(
+                                f,
+                                "      │ forAll {} = {} -- {}",
+                                step.step, step.counterexample, var_name
+                            )?;
                         } else {
-                            if let Some(ref var_name) = step.variable_name {
-                                writeln!(
-                                    f,
-                                    "      │ forAll {} = {} -- {}",
-                                    step.step, step.counterexample, var_name
-                                )?;
-                            } else {
-                                writeln!(f, "      │ Step {}: {}", step.step, step.counterexample)?;
-                            }
+                            writeln!(f, "      │ Step {}: {}", step.step, step.counterexample)?;
                         }
                     }
                     writeln!(f)?;
@@ -223,10 +219,10 @@ impl fmt::Display for TestResult {
 
                 // Show assertion type if available
                 if let Some(assertion) = assertion_type {
-                    writeln!(f, "    === {} ===", assertion)?;
+                    writeln!(f, "    === {assertion} ===")?;
                 }
 
-                write!(f, "    Minimal counterexample: {}", counterexample)
+                write!(f, "    Minimal counterexample: {counterexample}")
             }
             TestResult::Discard {
                 limit,
@@ -235,11 +231,11 @@ impl fmt::Display for TestResult {
             } => {
                 // Show module header if available
                 if let Some(module) = module_path {
-                    writeln!(f, "━━━ {} ━━━", module)?;
+                    writeln!(f, "━━━ {module} ━━━")?;
                 }
 
                 let prop_name = property_name.as_deref().unwrap_or("property");
-                write!(f, "  ⚐ {} gave up after {} discards", prop_name, limit)
+                write!(f, "  ⚐ {prop_name} gave up after {limit} discards")
             }
         }
     }

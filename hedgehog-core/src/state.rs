@@ -35,7 +35,7 @@ impl<T> Symbolic<T> {
             _phantom: PhantomData,
         }
     }
-    
+
     pub fn id(&self) -> SymbolicId {
         self.id
     }
@@ -57,11 +57,11 @@ impl<T> Concrete<T> {
     pub fn new(value: T) -> Self {
         Self { value }
     }
-    
+
     pub fn value(&self) -> &T {
         &self.value
     }
-    
+
     pub fn into_value(self) -> T {
         self.value
     }
@@ -84,7 +84,7 @@ impl<T> Var<T> {
     pub fn symbolic(id: SymbolicId) -> Self {
         Self::Symbolic(Symbolic::new(id))
     }
-    
+
     pub fn concrete(value: T) -> Self {
         Self::Concrete(Concrete::new(value))
     }
@@ -93,8 +93,8 @@ impl<T> Var<T> {
 impl<T: Display> Display for Var<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Var::Symbolic(sym) => write!(f, "{}", sym),
-            Var::Concrete(con) => write!(f, "{}", con),
+            Var::Symbolic(sym) => write!(f, "{sym}"),
+            Var::Concrete(con) => write!(f, "{con}"),
         }
     }
 }
@@ -104,21 +104,28 @@ pub struct Environment {
     vars: HashMap<SymbolicId, Box<dyn Any>>,
 }
 
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Environment {
     pub fn new() -> Self {
         Self {
             vars: HashMap::new(),
         }
     }
-    
+
     pub fn insert<T: 'static>(&mut self, symbolic: Symbolic<T>, concrete: Concrete<T>) {
-        self.vars.insert(symbolic.id(), Box::new(concrete.into_value()));
+        self.vars
+            .insert(symbolic.id(), Box::new(concrete.into_value()));
     }
-    
+
     pub fn get<T: 'static>(&self, symbolic: &Symbolic<T>) -> Option<&T> {
         self.vars.get(&symbolic.id())?.downcast_ref()
     }
-    
+
     pub fn reify<T: 'static + Clone>(&self, var: &Var<T>) -> Option<T> {
         match var {
             Var::Symbolic(sym) => self.get(sym).cloned(),
@@ -144,51 +151,58 @@ impl<S> GenerationContext<S> {
             seed: crate::data::Seed(42, 1337),
         }
     }
-    
+
     /// Get the next seed and advance the internal seed state
     pub fn next_seed(&mut self) -> crate::data::Seed {
         let (current_seed, next_seed) = self.seed.split();
         self.seed = next_seed;
         current_seed
     }
-    
+
     pub fn state(&self) -> &S {
         &self.state
     }
-    
+
     pub fn state_mut(&mut self) -> &mut S {
         &mut self.state
     }
-    
+
     pub fn new_var<T: 'static>(&mut self) -> Symbolic<T> {
         let id = SymbolicId(self.next_var_id);
         self.next_var_id += 1;
         self.available_vars.insert(id, TypeId::of::<T>());
         Symbolic::new(id)
     }
-    
+
     pub fn is_var_available(&self, id: SymbolicId, expected_type: TypeId) -> bool {
         self.available_vars.get(&id) == Some(&expected_type)
     }
 }
 
 /// Callback types for command configuration.
+type RequireFn<State, Input> = Arc<dyn Fn(&State, &Input) -> bool + Send + Sync>;
+type UpdateFn<State, Input, Output> = Arc<dyn Fn(&mut State, &Input, &Var<Output>) + Send + Sync>;
+type EnsureFn<State, Input, Output> =
+    Arc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync>;
+
 #[derive(Clone)]
 pub enum Callback<Input, Output, State> {
     /// Precondition that must be met before command execution.
-    Require(Arc<dyn Fn(&State, &Input) -> bool + Send + Sync>),
+    Require(RequireFn<State, Input>),
 
     /// State update after command execution.
-    Update(Arc<dyn Fn(&mut State, &Input, &Var<Output>) + Send + Sync>),
+    Update(UpdateFn<State, Input, Output>),
 
     /// Postcondition to verify after command execution.
-    Ensure(Arc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync>),
+    Ensure(EnsureFn<State, Input, Output>),
 }
+
+type InputGenFn<State, Input> = Box<dyn Fn(&State) -> Option<Gen<Input>> + Send + Sync>;
 
 /// Specification for a command that can be executed in a state machine test.
 pub struct Command<Input, Output, State, M> {
     /// Generate inputs for this command given current state.
-    pub input_gen: Box<dyn Fn(&State) -> Option<Gen<Input>> + Send + Sync>,
+    pub input_gen: InputGenFn<State, Input>,
 
     /// Execute the command with concrete inputs.
     pub execute: Arc<dyn Fn(Input) -> M + Send + Sync>,
@@ -202,11 +216,7 @@ pub struct Command<Input, Output, State, M> {
 }
 
 impl<Input, Output, State, M> Command<Input, Output, State, M> {
-    pub fn new<F, G>(
-        name: String,
-        input_gen: F,
-        execute: G,
-    ) -> Self
+    pub fn new<F, G>(name: String, input_gen: F, execute: G) -> Self
     where
         F: Fn(&State) -> Option<Gen<Input>> + Send + Sync + 'static,
         G: Fn(Input) -> M + Send + Sync + 'static,
@@ -295,6 +305,12 @@ pub struct Sequential<State, M> {
     pub actions: Vec<Box<dyn ActionTrait<State, M>>>,
 }
 
+impl<State, M> Default for Sequential<State, M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<State, M> Sequential<State, M> {
     pub fn new() -> Self {
         Self {
@@ -310,6 +326,12 @@ pub struct Parallel<State, M> {
     pub branch2: Vec<Box<dyn ActionTrait<State, M>>>,
 }
 
+impl<State, M> Default for Parallel<State, M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<State, M> Parallel<State, M> {
     pub fn new() -> Self {
         Self {
@@ -321,6 +343,8 @@ impl<State, M> Parallel<State, M> {
 }
 
 /// Trait for type-erased actions that can be executed.
+type CaptureCheckResult<State> = (Arc<State>, Arc<State>, ActionCheckEnsureFn<State>);
+
 pub trait ActionTrait<State, M>: Send {
     fn execute_action(&self, state: &mut State, env: &mut Environment) -> Result<(), String>;
     fn display_action(&self) -> String;
@@ -331,12 +355,18 @@ pub trait ActionTrait<State, M>: Send {
         &self,
         state: &mut State,
         env: &mut Environment,
-    ) -> Result<(Arc<State>, Arc<State>, Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>), String>;
+    ) -> Result<CaptureCheckResult<State>, String>;
 }
 
 /// Generator for creating sequences of actions.
 pub struct ActionGenerator<State> {
     commands: Vec<Box<dyn CommandTrait<State>>>,
+}
+
+impl<State> Default for ActionGenerator<State> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<State> ActionGenerator<State> {
@@ -345,11 +375,9 @@ impl<State> ActionGenerator<State> {
             commands: Vec::new(),
         }
     }
-    
-    pub fn add_command<Input, Output, M>(
-        &mut self,
-        command: Command<Input, Output, State, M>,
-    ) where
+
+    pub fn add_command<Input, Output, M>(&mut self, command: Command<Input, Output, State, M>)
+    where
         Input: 'static + Clone + Debug + Display + Send + Sync,
         Output: 'static + Clone + Debug + Display + Send + Sync,
         State: 'static + Clone + Send,
@@ -360,8 +388,12 @@ impl<State> ActionGenerator<State> {
             _phantom: PhantomData::<M>,
         }));
     }
-    
-    pub fn generate_sequential(&self, initial_state: State, num_actions: usize) -> Sequential<State, ()>
+
+    pub fn generate_sequential(
+        &self,
+        initial_state: State,
+        num_actions: usize,
+    ) -> Sequential<State, ()>
     where
         State: Clone,
     {
@@ -369,7 +401,8 @@ impl<State> ActionGenerator<State> {
         let mut actions = Vec::new();
 
         for _ in 0..num_actions {
-            let available_commands: Vec<_> = self.commands
+            let available_commands: Vec<_> = self
+                .commands
                 .iter()
                 .filter(|cmd| cmd.can_execute_dyn(ctx.state()))
                 .collect();
@@ -490,11 +523,15 @@ impl<State> ActionGenerator<State> {
         }
     }
 
-    fn generate_single_action(&self, ctx: &mut GenerationContext<State>) -> Option<Box<dyn ActionTrait<State, ()>>>
+    fn generate_single_action(
+        &self,
+        ctx: &mut GenerationContext<State>,
+    ) -> Option<Box<dyn ActionTrait<State, ()>>>
     where
         State: Clone,
     {
-        let available_commands: Vec<_> = self.commands
+        let available_commands: Vec<_> = self
+            .commands
             .iter()
             .filter(|cmd| cmd.can_execute_dyn(ctx.state()))
             .collect();
@@ -519,7 +556,10 @@ impl<State> ActionGenerator<State> {
 /// Trait for type-erased commands.
 trait CommandTrait<State> {
     fn can_execute_dyn(&self, state: &State) -> bool;
-    fn generate_action_dyn(&self, ctx: &mut GenerationContext<State>) -> Option<Box<dyn ActionTrait<State, ()>>>;
+    fn generate_action_dyn(
+        &self,
+        ctx: &mut GenerationContext<State>,
+    ) -> Option<Box<dyn ActionTrait<State, ()>>>;
     fn update_generation_state(&self, ctx: &mut GenerationContext<State>);
 }
 
@@ -539,15 +579,18 @@ where
     fn can_execute_dyn(&self, state: &State) -> bool {
         self.command.can_execute(state)
     }
-    
-    fn generate_action_dyn(&self, ctx: &mut GenerationContext<State>) -> Option<Box<dyn ActionTrait<State, ()>>> {
+
+    fn generate_action_dyn(
+        &self,
+        ctx: &mut GenerationContext<State>,
+    ) -> Option<Box<dyn ActionTrait<State, ()>>> {
         let input_gen = (self.command.input_gen)(ctx.state())?;
-        
+
         // Actually generate input using the Gen with proper seed
         let seed = ctx.next_seed();
         let tree = input_gen.generate(crate::data::Size(30), seed);
         let input = tree.value;
-        
+
         // Check Require callbacks
         for callback in &self.command.callbacks {
             if let Callback::Require(require_fn) = callback {
@@ -556,13 +599,13 @@ where
                 }
             }
         }
-        
+
         let output = ctx.new_var::<Output>();
-        
+
         // Create closures that capture the callback functions
         let execute_fn = self.command.execute.clone();
         let callbacks = create_callback_handlers(&self.command.callbacks);
-        
+
         Some(Box::new(FunctionalAction {
             input: input.clone(),
             output,
@@ -573,7 +616,7 @@ where
             _phantom: PhantomData::<(Output, State, M)>,
         }))
     }
-    
+
     fn update_generation_state(&self, ctx: &mut GenerationContext<State>) {
         // Apply the same state updates that would happen during execution
         if let Some(input_gen) = (self.command.input_gen)(ctx.state()) {
@@ -581,7 +624,7 @@ where
             let tree = input_gen.generate(crate::data::Size(30), seed);
             let input = tree.value;
             let output = ctx.new_var::<Output>(); // Create new var for this update
-            
+
             for callback in &self.command.callbacks {
                 if let Callback::Update(update_fn) = callback {
                     update_fn(ctx.state_mut(), &input, &Var::Symbolic(output.clone()));
@@ -591,13 +634,15 @@ where
     }
 }
 
+type CallbackHandlers<State, Input, Output> = (
+    Option<UpdateFn<State, Input, Output>>,
+    Option<EnsureFn<State, Input, Output>>,
+);
+
 // Helper to convert callbacks into function types we can store
 fn create_callback_handlers<Input, Output, State>(
-    callbacks: &[Callback<Input, Output, State>]
-) -> (
-    Option<Arc<dyn Fn(&mut State, &Input, &Var<Output>) + Send + Sync>>,
-    Option<Arc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync>>
-)
+    callbacks: &[Callback<Input, Output, State>],
+) -> CallbackHandlers<State, Input, Output>
 where
     Input: 'static,
     Output: 'static,
@@ -610,10 +655,10 @@ where
         match callback {
             Callback::Update(f) => {
                 update_fn = Some(f.clone());
-            },
+            }
             Callback::Ensure(f) => {
                 ensure_fn = Some(f.clone());
-            },
+            }
             Callback::Require(_) => {
                 // Already handled during generation
             }
@@ -628,8 +673,8 @@ struct FunctionalAction<Input, Output, State, M> {
     input: Input,
     output: Symbolic<Output>,
     execute_fn: Arc<dyn Fn(Input) -> M + Send + Sync>,
-    update_fn: Option<Arc<dyn Fn(&mut State, &Input, &Var<Output>) + Send + Sync>>,
-    ensure_fn: Option<Arc<dyn Fn(&State, &State, &Input, &Output) -> Result<(), String> + Send + Sync>>,
+    update_fn: Option<UpdateFn<State, Input, Output>>,
+    ensure_fn: Option<EnsureFn<State, Input, Output>>,
     name: String,
     _phantom: PhantomData<(Output, State, M)>,
 }
@@ -678,7 +723,14 @@ where
         &self,
         state: &mut State,
         env: &mut Environment,
-    ) -> Result<(Arc<State>, Arc<State>, Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>), String> {
+    ) -> Result<
+        (
+            Arc<State>,
+            Arc<State>,
+            Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>,
+        ),
+        String,
+    > {
         let state_before = Arc::new(state.clone());
         let concrete_input = self.input.clone();
 
@@ -696,8 +748,11 @@ where
 
         let state_after = Arc::new(state.clone());
 
+        type EnsureCallbackFn<State> =
+            Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>;
+
         // Capture the ensure callback with the actual output value
-        let ensure_callback: Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync> =
+        let ensure_callback: EnsureCallbackFn<State> =
             if let Some(ensure_fn) = self.ensure_fn.clone() {
                 let output_for_closure: Output = output_value.into();
                 let input_for_closure = concrete_input.clone();
@@ -711,8 +766,6 @@ where
         Ok((state_before, state_after, ensure_callback))
     }
 }
-
-
 
 /// Execute a sequential test.
 pub fn execute_sequential<State>(
@@ -733,22 +786,21 @@ where
     Ok(())
 }
 
+type ActionCheckEnsureFn<State> = Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>;
+
 /// Captured state transition with postcondition check.
 /// Uses Arc for cheap cloning when exploring interleavings.
 #[derive(Clone)]
 struct ActionCheck<State> {
     state_after: Arc<State>,
-    ensure: Arc<dyn Fn(&State, &State) -> Result<(), String> + Send + Sync>,
+    ensure: ActionCheckEnsureFn<State>,
 }
 
 /// Generate all possible interleavings of two index sequences.
 /// Returns indices that can be used to access elements from two separate collections.
 fn interleave_indices(len1: usize, len2: usize) -> Vec<Vec<(usize, bool)>> {
     // (index, is_from_first) - bool indicates which branch the index is from
-    fn generate(
-        remaining1: usize,
-        remaining2: usize,
-    ) -> Vec<Vec<(usize, bool)>> {
+    fn generate(remaining1: usize, remaining2: usize) -> Vec<Vec<(usize, bool)>> {
         match (remaining1, remaining2) {
             (0, 0) => vec![vec![]],
             (0, n) => {
@@ -1018,10 +1070,10 @@ mod tests {
     fn test_symbolic_variables() {
         let sym1: Symbolic<i32> = Symbolic::new(SymbolicId(0));
         let sym2: Symbolic<i32> = Symbolic::new(SymbolicId(1));
-        
+
         assert_ne!(sym1, sym2);
         assert_eq!(sym1.id(), SymbolicId(0));
-        assert_eq!(format!("{}", sym1), "Var0");
+        assert_eq!(format!("{sym1}"), "Var0");
     }
 
     #[test]
@@ -1036,13 +1088,13 @@ mod tests {
         let mut env = Environment::new();
         let sym: Symbolic<i32> = Symbolic::new(SymbolicId(0));
         let concrete = Concrete::new(42);
-        
+
         env.insert(sym.clone(), concrete);
         assert_eq!(env.get(&sym), Some(&42));
-        
+
         let var_concrete = Var::concrete(100);
         let var_symbolic = Var::symbolic(SymbolicId(0));
-        
+
         assert_eq!(env.reify(&var_concrete), Some(100));
         assert_eq!(env.reify(&var_symbolic), Some(42));
     }
@@ -1050,13 +1102,13 @@ mod tests {
     #[test]
     fn test_generation_context() {
         let mut ctx = GenerationContext::new(TestState::new());
-        
+
         let var1: Symbolic<i32> = ctx.new_var();
         let var2: Symbolic<String> = ctx.new_var();
-        
+
         assert_eq!(var1.id(), SymbolicId(0));
         assert_eq!(var2.id(), SymbolicId(1));
-        
+
         assert!(ctx.is_var_available(var1.id(), TypeId::of::<i32>()));
         assert!(ctx.is_var_available(var2.id(), TypeId::of::<String>()));
         assert!(!ctx.is_var_available(var1.id(), TypeId::of::<String>()));
@@ -1066,7 +1118,7 @@ mod tests {
     struct IncrementInput {
         amount: i32,
     }
-    
+
     impl std::fmt::Display for IncrementInput {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{}", self.amount)
@@ -1087,15 +1139,21 @@ mod tests {
             },
             |input: IncrementInput| input.amount,
         );
-        
-        assert!(increment_cmd.can_execute(&TestState { counter: 0, items: vec![] }));
-        assert!(!increment_cmd.can_execute(&TestState { counter: 100, items: vec![] }));
+
+        assert!(increment_cmd.can_execute(&TestState {
+            counter: 0,
+            items: vec![]
+        }));
+        assert!(!increment_cmd.can_execute(&TestState {
+            counter: 100,
+            items: vec![]
+        }));
     }
 
     #[test]
     fn test_action_generator() {
         let mut generator = ActionGenerator::new();
-        
+
         let increment_cmd: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "increment".to_string(),
             |state: &TestState| {
@@ -1107,53 +1165,53 @@ mod tests {
             },
             |input: IncrementInput| input.amount,
         );
-        
+
         generator.add_command(increment_cmd);
-        
+
         let initial_state = TestState::new();
         let sequential = generator.generate_sequential(initial_state, 5);
-        
+
         assert_eq!(sequential.actions.len(), 5);
-        
+
         // Test execution
         let result = execute_sequential(TestState::new(), sequential);
         assert!(result.is_ok());
     }
 
-    #[test] 
+    #[test]
     fn test_state_never_updates() {
         // This test will FAIL because state updates are not implemented
         let mut generator = ActionGenerator::new();
-        
+
         let increment_cmd: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "increment".to_string(),
-            |_state: &TestState| {
-                Some(Gen::constant(IncrementInput { amount: 1 }))
-            },
+            |_state: &TestState| Some(Gen::constant(IncrementInput { amount: 1 })),
             |input: IncrementInput| input.amount,
         )
-        .with_update(|state: &mut TestState, _input: &IncrementInput, _output: &Var<i32>| {
-            state.counter += 1; // This should happen but doesn't
-        });
-        
+        .with_update(
+            |state: &mut TestState, _input: &IncrementInput, _output: &Var<i32>| {
+                state.counter += 1; // This should happen but doesn't
+            },
+        );
+
         generator.add_command(increment_cmd);
-        
+
         let initial_state = TestState::new();
         assert_eq!(initial_state.counter, 0);
-        
+
         let sequential = generator.generate_sequential(initial_state.clone(), 3);
         let _ = execute_sequential(initial_state.clone(), sequential);
-        
+
         // This will fail because state updates are not implemented
         // In a working implementation, counter would be 3
         assert_eq!(initial_state.counter, 0); // Still 0, proving it doesn't work
     }
 
-    #[test] 
+    #[test]
     fn test_preconditions_working() {
         // This test shows preconditions actually work now
         let mut generator = ActionGenerator::new();
-        
+
         let impossible_cmd: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "impossible".to_string(),
             |_state: &TestState| Some(Gen::constant(IncrementInput { amount: 1 })),
@@ -1162,46 +1220,46 @@ mod tests {
         .with_require(|_state: &TestState, _input: &IncrementInput| {
             false // Should never allow this command to execute
         });
-        
+
         generator.add_command(impossible_cmd);
-        
+
         let initial_state = TestState::new();
         let sequential = generator.generate_sequential(initial_state, 5);
-        
+
         // Should be 0 actions because preconditions now work
         assert_eq!(sequential.actions.len(), 0);
     }
-    
+
     #[test]
     fn test_input_generation_variety() {
         // This test shows we actually generate different inputs
         use crate::gen::Gen;
-        
+
         let mut generator = ActionGenerator::new();
-        
+
         let varied_cmd: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "varied".to_string(),
             |_state: &TestState| {
                 Some(Gen::new(|_size, seed| {
                     let (value, _new_seed) = seed.next_bounded(100);
-                    crate::tree::Tree::singleton(IncrementInput { 
-                        amount: value as i32 
+                    crate::tree::Tree::singleton(IncrementInput {
+                        amount: value as i32,
                     })
                 }))
             },
             |input: IncrementInput| input.amount,
         );
-        
+
         generator.add_command(varied_cmd);
-        
+
         let initial_state = TestState::new();
         let sequential = generator.generate_sequential(initial_state, 10);
-        
+
         println!("Generated actions:");
         for action in &sequential.actions {
             println!("  {}", action.display_action());
         }
-        
+
         assert_eq!(sequential.actions.len(), 10);
     }
 
@@ -1209,56 +1267,61 @@ mod tests {
     fn test_postconditions_working() {
         // This test shows postconditions now actually work
         let mut generator = ActionGenerator::new();
-        
+
         let failing_cmd: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "failing".to_string(),
             |_state: &TestState| Some(Gen::constant(IncrementInput { amount: 1 })),
             |input: IncrementInput| input.amount,
         )
-        .with_ensure(|_old_state: &TestState, _new_state: &TestState, _input: &IncrementInput, _output: &i32| {
-            Err("This should fail and does".to_string()) // Should cause execution to fail
-        });
-        
+        .with_ensure(
+            |_old_state: &TestState,
+             _new_state: &TestState,
+             _input: &IncrementInput,
+             _output: &i32| {
+                Err("This should fail and does".to_string()) // Should cause execution to fail
+            },
+        );
+
         generator.add_command(failing_cmd);
-        
+
         let initial_state = TestState::new();
         let sequential = generator.generate_sequential(initial_state, 1);
-        
+
         // Should fail due to postcondition working properly
         let result = execute_sequential(TestState::new(), sequential);
         assert!(result.is_err()); // Proves postconditions now work
     }
-    
+
     #[test]
     fn test_randomized_command_selection() {
         // This test shows we get variety in command selection
         let mut generator = ActionGenerator::new();
-        
+
         let cmd_a: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "increment_a".to_string(),
             |_state: &TestState| Some(Gen::constant(IncrementInput { amount: 1 })),
             |input: IncrementInput| input.amount,
         );
-        
+
         let cmd_b: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "increment_b".to_string(),
             |_state: &TestState| Some(Gen::constant(IncrementInput { amount: 2 })),
             |input: IncrementInput| input.amount,
         );
-        
+
         let cmd_c: Command<IncrementInput, i32, TestState, i32> = Command::new(
             "increment_c".to_string(),
             |_state: &TestState| Some(Gen::constant(IncrementInput { amount: 3 })),
             |input: IncrementInput| input.amount,
         );
-        
+
         generator.add_command(cmd_a);
         generator.add_command(cmd_b);
         generator.add_command(cmd_c);
-        
+
         let initial_state = TestState::new();
         let sequential = generator.generate_sequential(initial_state, 10);
-        
+
         println!("Command selections:");
         let mut command_counts = std::collections::HashMap::new();
         for action in &sequential.actions {
@@ -1273,29 +1336,32 @@ mod tests {
                 "unknown"
             };
             *command_counts.entry(command_name).or_insert(0) += 1;
-            println!("  {}", display);
+            println!("  {display}");
         }
-        
-        println!("Command distribution: {:?}", command_counts);
-        
+
+        println!("Command distribution: {command_counts:?}");
+
         // We should see variety in command selection
         assert_eq!(sequential.actions.len(), 10);
         // At least 2 different commands should be selected
-        assert!(command_counts.len() >= 2, "Should select multiple different commands, got: {:?}", command_counts);
+        assert!(
+            command_counts.len() >= 2,
+            "Should select multiple different commands, got: {command_counts:?}"
+        );
     }
-    
+
     #[test]
     fn test_comprehensive_state_machine_workflow() {
         // This test demonstrates a complete state machine testing workflow
         // with realistic commands, state tracking, and verification
-        
+
         #[derive(Debug, Clone)]
         struct BankState {
             balance: i32,
             is_open: bool,
             transaction_count: usize,
         }
-        
+
         impl BankState {
             fn new() -> Self {
                 Self {
@@ -1305,31 +1371,31 @@ mod tests {
                 }
             }
         }
-        
+
         #[derive(Clone, Debug)]
         struct DepositInput {
             amount: i32,
         }
-        
+
         impl std::fmt::Display for DepositInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "${}", self.amount)
             }
         }
-        
+
         #[derive(Clone, Debug)]
         struct WithdrawInput {
             amount: i32,
         }
-        
+
         impl std::fmt::Display for WithdrawInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "${}", self.amount)
             }
         }
-        
+
         let mut generator = ActionGenerator::new();
-        
+
         // Deposit command
         let deposit_cmd: Command<DepositInput, i32, BankState, i32> = Command::new(
             "deposit".to_string(),
@@ -1337,8 +1403,8 @@ mod tests {
                 if state.is_open {
                     Some(Gen::new(|_size, seed| {
                         let (amount, _new_seed) = seed.next_bounded(100);
-                        crate::tree::Tree::singleton(DepositInput { 
-                            amount: (amount as i32) + 1 // Ensure positive amounts
+                        crate::tree::Tree::singleton(DepositInput {
+                            amount: (amount as i32) + 1, // Ensure positive amounts
                         })
                     }))
                 } else {
@@ -1347,26 +1413,34 @@ mod tests {
             },
             |input: DepositInput| input.amount,
         )
-        .with_require(|state: &BankState, input: &DepositInput| {
-            state.is_open && input.amount > 0
-        })
-        .with_update(|state: &mut BankState, input: &DepositInput, _output: &Var<i32>| {
-            state.balance += input.amount;
-            state.transaction_count += 1;
-        })
-        .with_ensure(|old_state: &BankState, new_state: &BankState, input: &DepositInput, output: &i32| {
-            if new_state.balance != old_state.balance + input.amount {
-                Err(format!("Balance mismatch: expected {}, got {}", 
-                    old_state.balance + input.amount, new_state.balance))
-            } else if new_state.transaction_count != old_state.transaction_count + 1 {
-                Err("Transaction count not incremented".to_string())
-            } else if *output != input.amount {
-                Err(format!("Output mismatch: expected {}, got {}", input.amount, output))
-            } else {
-                Ok(())
-            }
-        });
-        
+        .with_require(|state: &BankState, input: &DepositInput| state.is_open && input.amount > 0)
+        .with_update(
+            |state: &mut BankState, input: &DepositInput, _output: &Var<i32>| {
+                state.balance += input.amount;
+                state.transaction_count += 1;
+            },
+        )
+        .with_ensure(
+            |old_state: &BankState, new_state: &BankState, input: &DepositInput, output: &i32| {
+                if new_state.balance != old_state.balance + input.amount {
+                    Err(format!(
+                        "Balance mismatch: expected {}, got {}",
+                        old_state.balance + input.amount,
+                        new_state.balance
+                    ))
+                } else if new_state.transaction_count != old_state.transaction_count + 1 {
+                    Err("Transaction count not incremented".to_string())
+                } else if *output != input.amount {
+                    Err(format!(
+                        "Output mismatch: expected {}, got {}",
+                        input.amount, output
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
         // Withdraw command
         let withdraw_cmd: Command<WithdrawInput, i32, BankState, i32> = Command::new(
             "withdraw".to_string(),
@@ -1375,8 +1449,8 @@ mod tests {
                     let max_withdraw = std::cmp::min(state.balance, 50);
                     Some(Gen::new(move |_size, seed| {
                         let (amount, _new_seed) = seed.next_bounded(max_withdraw as u64 + 1);
-                        crate::tree::Tree::singleton(WithdrawInput { 
-                            amount: amount as i32 
+                        crate::tree::Tree::singleton(WithdrawInput {
+                            amount: amount as i32,
                         })
                     }))
                 } else {
@@ -1388,51 +1462,61 @@ mod tests {
         .with_require(|state: &BankState, input: &WithdrawInput| {
             state.is_open && input.amount >= 0 && state.balance >= input.amount
         })
-        .with_update(|state: &mut BankState, input: &WithdrawInput, _output: &Var<i32>| {
-            state.balance -= input.amount;
-            state.transaction_count += 1;
-        })
-        .with_ensure(|old_state: &BankState, new_state: &BankState, input: &WithdrawInput, output: &i32| {
-            if new_state.balance != old_state.balance - input.amount {
-                Err(format!("Balance mismatch after withdrawal: expected {}, got {}", 
-                    old_state.balance - input.amount, new_state.balance))
-            } else if new_state.transaction_count != old_state.transaction_count + 1 {
-                Err("Transaction count not incremented".to_string())
-            } else if *output != input.amount {
-                Err(format!("Output mismatch: expected {}, got {}", input.amount, output))
-            } else {
-                Ok(())
-            }
-        });
-        
+        .with_update(
+            |state: &mut BankState, input: &WithdrawInput, _output: &Var<i32>| {
+                state.balance -= input.amount;
+                state.transaction_count += 1;
+            },
+        )
+        .with_ensure(
+            |old_state: &BankState, new_state: &BankState, input: &WithdrawInput, output: &i32| {
+                if new_state.balance != old_state.balance - input.amount {
+                    Err(format!(
+                        "Balance mismatch after withdrawal: expected {}, got {}",
+                        old_state.balance - input.amount,
+                        new_state.balance
+                    ))
+                } else if new_state.transaction_count != old_state.transaction_count + 1 {
+                    Err("Transaction count not incremented".to_string())
+                } else if *output != input.amount {
+                    Err(format!(
+                        "Output mismatch: expected {}, got {}",
+                        input.amount, output
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
         generator.add_command(deposit_cmd);
         generator.add_command(withdraw_cmd);
-        
+
         let initial_state = BankState::new();
         let sequential = generator.generate_sequential(initial_state.clone(), 20);
-        
+
         println!("Generated banking sequence:");
         for action in &sequential.actions {
             println!("  {}", action.display_action());
         }
-        
+
         // Execute the sequence and verify all postconditions pass
         let result = execute_sequential(initial_state, sequential);
-        
+
         match &result {
             Ok(()) => println!("✓ All transactions succeeded with proper state tracking!"),
-            Err(e) => println!("✗ Transaction failed: {}", e),
+            Err(e) => println!("✗ Transaction failed: {e}"),
         }
-        
+
         // This should succeed because our state machine is properly implemented
-        assert!(result.is_ok(), "State machine execution failed: {:?}", result);
+        assert!(result.is_ok(), "State machine execution failed: {result:?}");
     }
-    
+
     #[test]
     fn test_connection_pool_state_machine() {
         // Real-world example: HTTP connection pool management
         // This tests realistic scenarios like connection limits, timeouts, cleanup
-        
+
         #[derive(Debug, Clone, PartialEq)]
         struct ConnectionPool {
             active_connections: HashMap<String, bool>, // host -> connected
@@ -1441,7 +1525,7 @@ mod tests {
             request_count: usize,
             hosts: Vec<String>,
         }
-        
+
         impl ConnectionPool {
             fn new() -> Self {
                 Self {
@@ -1451,56 +1535,56 @@ mod tests {
                     request_count: 0,
                     hosts: vec![
                         "api.example.com".to_string(),
-                        "db.example.com".to_string(), 
+                        "db.example.com".to_string(),
                         "cache.example.com".to_string(),
                     ],
                 }
             }
-            
+
             fn can_connect(&self) -> bool {
                 self.connection_count < self.max_connections
             }
-            
+
             fn is_connected(&self, host: &str) -> bool {
                 self.active_connections.get(host).copied().unwrap_or(false)
             }
         }
-        
+
         #[derive(Clone, Debug)]
         struct ConnectInput {
             host: String,
         }
-        
+
         impl std::fmt::Display for ConnectInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{}", self.host)
             }
         }
-        
+
         #[derive(Clone, Debug)]
         struct RequestInput {
             host: String,
         }
-        
+
         impl std::fmt::Display for RequestInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "GET {}/", self.host)
             }
         }
-        
-        #[derive(Clone, Debug)]  
+
+        #[derive(Clone, Debug)]
         struct DisconnectInput {
             host: String,
         }
-        
+
         impl std::fmt::Display for DisconnectInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{}", self.host)
             }
         }
-        
+
         let mut generator = ActionGenerator::new();
-        
+
         // Connect command
         let connect_cmd: Command<ConnectInput, bool, ConnectionPool, bool> = Command::new(
             "connect".to_string(),
@@ -1510,8 +1594,8 @@ mod tests {
                         let hosts = state.hosts.clone();
                         move |_size, seed| {
                             let (idx, _) = seed.next_bounded(hosts.len() as u64);
-                            crate::tree::Tree::singleton(ConnectInput { 
-                                host: hosts[idx as usize].clone() 
+                            crate::tree::Tree::singleton(ConnectInput {
+                                host: hosts[idx as usize].clone(),
                             })
                         }
                     }))
@@ -1524,37 +1608,45 @@ mod tests {
         .with_require(|state: &ConnectionPool, input: &ConnectInput| {
             state.can_connect() && !state.is_connected(&input.host)
         })
-        .with_update(|state: &mut ConnectionPool, input: &ConnectInput, _output: &Var<bool>| {
-            state.active_connections.insert(input.host.clone(), true);
-            state.connection_count += 1;
-        })
-        .with_ensure(|old_state: &ConnectionPool, new_state: &ConnectionPool, input: &ConnectInput, output: &bool| {
-            if !new_state.is_connected(&input.host) {
-                Err(format!("Failed to connect to {}", input.host))
-            } else if new_state.connection_count != old_state.connection_count + 1 {
-                Err("Connection count not incremented".to_string())
-            } else if !output {
-                Err("Connect should return true on success".to_string())
-            } else {
-                Ok(())
-            }
-        });
-        
-        // Request command  
+        .with_update(
+            |state: &mut ConnectionPool, input: &ConnectInput, _output: &Var<bool>| {
+                state.active_connections.insert(input.host.clone(), true);
+                state.connection_count += 1;
+            },
+        )
+        .with_ensure(
+            |old_state: &ConnectionPool,
+             new_state: &ConnectionPool,
+             input: &ConnectInput,
+             output: &bool| {
+                if !new_state.is_connected(&input.host) {
+                    Err(format!("Failed to connect to {}", input.host))
+                } else if new_state.connection_count != old_state.connection_count + 1 {
+                    Err("Connection count not incremented".to_string())
+                } else if !output {
+                    Err("Connect should return true on success".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        // Request command
         let request_cmd: Command<RequestInput, usize, ConnectionPool, usize> = Command::new(
-            "request".to_string(), 
+            "request".to_string(),
             |state: &ConnectionPool| {
-                let connected_hosts: Vec<_> = state.active_connections
+                let connected_hosts: Vec<_> = state
+                    .active_connections
                     .iter()
                     .filter(|(_, &connected)| connected)
                     .map(|(host, _)| host.clone())
                     .collect();
-                    
+
                 if !connected_hosts.is_empty() {
                     Some(Gen::new(move |_size, seed| {
                         let (idx, _) = seed.next_bounded(connected_hosts.len() as u64);
-                        crate::tree::Tree::singleton(RequestInput { 
-                            host: connected_hosts[idx as usize].clone() 
+                        crate::tree::Tree::singleton(RequestInput {
+                            host: connected_hosts[idx as usize].clone(),
                         })
                     }))
                 } else {
@@ -1566,34 +1658,42 @@ mod tests {
         .with_require(|state: &ConnectionPool, input: &RequestInput| {
             state.is_connected(&input.host)
         })
-        .with_update(|state: &mut ConnectionPool, _input: &RequestInput, _output: &Var<usize>| {
-            state.request_count += 1;
-        })
-        .with_ensure(|old_state: &ConnectionPool, new_state: &ConnectionPool, input: &RequestInput, output: &usize| {
-            if new_state.request_count != old_state.request_count + 1 {
-                Err("Request count not incremented".to_string())
-            } else if *output != input.host.len() {
-                Err("Incorrect response size".to_string())
-            } else {
-                Ok(())
-            }
-        });
-        
+        .with_update(
+            |state: &mut ConnectionPool, _input: &RequestInput, _output: &Var<usize>| {
+                state.request_count += 1;
+            },
+        )
+        .with_ensure(
+            |old_state: &ConnectionPool,
+             new_state: &ConnectionPool,
+             input: &RequestInput,
+             output: &usize| {
+                if new_state.request_count != old_state.request_count + 1 {
+                    Err("Request count not incremented".to_string())
+                } else if *output != input.host.len() {
+                    Err("Incorrect response size".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
         // Disconnect command
         let disconnect_cmd: Command<DisconnectInput, bool, ConnectionPool, bool> = Command::new(
             "disconnect".to_string(),
             |state: &ConnectionPool| {
-                let connected_hosts: Vec<_> = state.active_connections
-                    .iter() 
+                let connected_hosts: Vec<_> = state
+                    .active_connections
+                    .iter()
                     .filter(|(_, &connected)| connected)
                     .map(|(host, _)| host.clone())
                     .collect();
-                    
+
                 if !connected_hosts.is_empty() {
                     Some(Gen::new(move |_size, seed| {
                         let (idx, _) = seed.next_bounded(connected_hosts.len() as u64);
-                        crate::tree::Tree::singleton(DisconnectInput { 
-                            host: connected_hosts[idx as usize].clone() 
+                        crate::tree::Tree::singleton(DisconnectInput {
+                            host: connected_hosts[idx as usize].clone(),
                         })
                     }))
                 } else {
@@ -1605,50 +1705,57 @@ mod tests {
         .with_require(|state: &ConnectionPool, input: &DisconnectInput| {
             state.is_connected(&input.host)
         })
-        .with_update(|state: &mut ConnectionPool, input: &DisconnectInput, _output: &Var<bool>| {
-            state.active_connections.insert(input.host.clone(), false);
-            state.connection_count -= 1;
-        })
-        .with_ensure(|old_state: &ConnectionPool, new_state: &ConnectionPool, input: &DisconnectInput, output: &bool| {
-            if new_state.is_connected(&input.host) {
-                Err(format!("Failed to disconnect from {}", input.host))
-            } else if new_state.connection_count != old_state.connection_count - 1 {
-                Err("Connection count not decremented".to_string())
-            } else if !output {
-                Err("Disconnect should return true on success".to_string())
-            } else {
-                Ok(())
-            }
-        });
-        
+        .with_update(
+            |state: &mut ConnectionPool, input: &DisconnectInput, _output: &Var<bool>| {
+                state.active_connections.insert(input.host.clone(), false);
+                state.connection_count -= 1;
+            },
+        )
+        .with_ensure(
+            |old_state: &ConnectionPool,
+             new_state: &ConnectionPool,
+             input: &DisconnectInput,
+             output: &bool| {
+                if new_state.is_connected(&input.host) {
+                    Err(format!("Failed to disconnect from {}", input.host))
+                } else if new_state.connection_count != old_state.connection_count - 1 {
+                    Err("Connection count not decremented".to_string())
+                } else if !output {
+                    Err("Disconnect should return true on success".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
         generator.add_command(connect_cmd);
         generator.add_command(request_cmd);
         generator.add_command(disconnect_cmd);
-        
+
         let initial_state = ConnectionPool::new();
         let sequential = generator.generate_sequential(initial_state.clone(), 15);
-        
+
         println!("Generated connection pool sequence:");
         for (i, action) in sequential.actions.iter().enumerate() {
             println!("  {}: {}", i + 1, action.display_action());
         }
-        
+
         let result = execute_sequential(initial_state, sequential);
-        
+
         match &result {
             Ok(()) => println!("✓ Connection pool state machine test passed!"),
-            Err(e) => println!("✗ Connection pool test failed: {}", e),
+            Err(e) => println!("✗ Connection pool test failed: {e}"),
         }
-        
+
         // This demonstrates realistic resource management patterns
-        assert!(result.is_ok(), "Connection pool test failed: {:?}", result);
+        assert!(result.is_ok(), "Connection pool test failed: {result:?}");
     }
-    
+
     #[test]
     fn test_readme_quick_start_example() {
         // This is the exact example from README.md to ensure it works
-        use crate::state::*;
         use crate::gen::Gen;
+        use crate::state::*;
         use crate::tree::Tree;
 
         // 1. Define your system state
@@ -1658,12 +1765,16 @@ mod tests {
         }
 
         impl Counter {
-            fn new() -> Self { Self { value: 0 } }
+            fn new() -> Self {
+                Self { value: 0 }
+            }
         }
 
         // 2. Define command inputs
         #[derive(Clone, Debug)]
-        struct AddInput { amount: i32 }
+        struct AddInput {
+            amount: i32,
+        }
 
         impl std::fmt::Display for AddInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1672,37 +1783,41 @@ mod tests {
         }
 
         let mut generator = ActionGenerator::new();
-        
+
         // 3. Create a command
         let add_cmd: Command<AddInput, i32, Counter, i32> = Command::new(
             "add".to_string(),
-            |_state: &Counter| Some(Gen::new(|_size, seed| {
-                let (amount, _) = seed.next_bounded(10);
-                Tree::singleton(AddInput { amount: amount as i32 + 1 })
-            })),
+            |_state: &Counter| {
+                Some(Gen::new(|_size, seed| {
+                    let (amount, _) = seed.next_bounded(10);
+                    Tree::singleton(AddInput {
+                        amount: amount as i32 + 1,
+                    })
+                }))
+            },
             |input| input.amount, // The actual operation
         )
         .with_update(|state, input, _output| {
             state.value += input.amount; // Update model state
         });
-        
+
         generator.add_command(add_cmd);
-        
+
         // 4. Generate and run test
         let initial = Counter::new();
         let test = generator.generate_sequential(initial.clone(), 5);
-        
+
         println!("README example sequence:");
         for action in &test.actions {
             println!("  {}", action.display_action());
         }
-        
+
         let result = execute_sequential(initial, test);
-        assert!(result.is_ok(), "README example failed: {:?}", result);
+        assert!(result.is_ok(), "README example failed: {result:?}");
         println!("✓ README quick start example works!");
     }
 
-    #[test] 
+    #[test]
     fn test_tutorial_step_1_simple_counter() {
         // Step 1 from tutorial - basic counter
         #[derive(Debug, Clone, PartialEq)]
@@ -1711,7 +1826,9 @@ mod tests {
         }
 
         #[derive(Clone, Debug)]
-        struct AddInput { amount: i32 }
+        struct AddInput {
+            amount: i32,
+        }
 
         impl std::fmt::Display for AddInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1720,24 +1837,30 @@ mod tests {
         }
 
         let mut generator = ActionGenerator::new();
-        
+
         let add_cmd: Command<AddInput, i32, Counter, i32> = Command::new(
             "add".to_string(),
-            |_state: &Counter| Some(Gen::new(|_size, seed| {
-                let (amount, _) = seed.next_bounded(10);
-                crate::tree::Tree::singleton(AddInput { amount: amount as i32 + 1 })
-            })),
+            |_state: &Counter| {
+                Some(Gen::new(|_size, seed| {
+                    let (amount, _) = seed.next_bounded(10);
+                    crate::tree::Tree::singleton(AddInput {
+                        amount: amount as i32 + 1,
+                    })
+                }))
+            },
             |input: AddInput| input.amount,
         )
-        .with_update(|state: &mut Counter, input: &AddInput, _output: &Var<i32>| {
-            state.value += input.amount;
-        });
-        
+        .with_update(
+            |state: &mut Counter, input: &AddInput, _output: &Var<i32>| {
+                state.value += input.amount;
+            },
+        );
+
         generator.add_command(add_cmd);
-        
+
         let initial = Counter { value: 0 };
         let test = generator.generate_sequential(initial.clone(), 5);
-        
+
         let result = execute_sequential(initial, test);
         assert!(result.is_ok());
         println!("✓ Tutorial Step 1 works!");
@@ -1753,12 +1876,21 @@ mod tests {
         }
 
         impl BoundedCounter {
-            fn new() -> Self { Self { value: 0, max_value: 100 } }
-            fn can_add(&self, amount: i32) -> bool { self.value + amount <= self.max_value }
+            fn new() -> Self {
+                Self {
+                    value: 0,
+                    max_value: 100,
+                }
+            }
+            fn can_add(&self, amount: i32) -> bool {
+                self.value + amount <= self.max_value
+            }
         }
 
         #[derive(Clone, Debug)]
-        struct AddInput { amount: i32 }
+        struct AddInput {
+            amount: i32,
+        }
 
         impl std::fmt::Display for AddInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1767,7 +1899,7 @@ mod tests {
         }
 
         let mut generator = ActionGenerator::new();
-        
+
         let add_cmd: Command<AddInput, i32, BoundedCounter, i32> = Command::new(
             "add".to_string(),
             |state: &BoundedCounter| {
@@ -1776,7 +1908,9 @@ mod tests {
                     let max_add = std::cmp::min(remaining, 10);
                     Some(Gen::new(move |_size, seed| {
                         let (amount, _) = seed.next_bounded(max_add as u64);
-                        crate::tree::Tree::singleton(AddInput { amount: amount as i32 + 1 })
+                        crate::tree::Tree::singleton(AddInput {
+                            amount: amount as i32 + 1,
+                        })
                     }))
                 } else {
                     None
@@ -1784,35 +1918,44 @@ mod tests {
             },
             |input: AddInput| input.amount,
         )
-        .with_require(|state: &BoundedCounter, input: &AddInput| {
-            state.can_add(input.amount)
-        })
-        .with_update(|state: &mut BoundedCounter, input: &AddInput, _output: &Var<i32>| {
-            state.value += input.amount;
-        })
-        .with_ensure(|old_state: &BoundedCounter, new_state: &BoundedCounter, input: &AddInput, output: &i32| {
-            if new_state.value != old_state.value + input.amount {
-                Err(format!("Expected {}, got {}", old_state.value + input.amount, new_state.value))
-            } else if new_state.value > new_state.max_value {
-                Err("Counter exceeded maximum".to_string())
-            } else if *output != input.amount {
-                Err("Incorrect return value".to_string())
-            } else {
-                Ok(())
-            }
-        });
-        
+        .with_require(|state: &BoundedCounter, input: &AddInput| state.can_add(input.amount))
+        .with_update(
+            |state: &mut BoundedCounter, input: &AddInput, _output: &Var<i32>| {
+                state.value += input.amount;
+            },
+        )
+        .with_ensure(
+            |old_state: &BoundedCounter,
+             new_state: &BoundedCounter,
+             input: &AddInput,
+             output: &i32| {
+                if new_state.value != old_state.value + input.amount {
+                    Err(format!(
+                        "Expected {}, got {}",
+                        old_state.value + input.amount,
+                        new_state.value
+                    ))
+                } else if new_state.value > new_state.max_value {
+                    Err("Counter exceeded maximum".to_string())
+                } else if *output != input.amount {
+                    Err("Incorrect return value".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
         generator.add_command(add_cmd);
-        
+
         let initial = BoundedCounter::new();
         let test = generator.generate_sequential(initial.clone(), 20);
-        
+
         let result = execute_sequential(initial, test);
         assert!(result.is_ok());
         println!("✓ Tutorial Step 2 works!");
     }
 
-    #[test] 
+    #[test]
     fn test_tutorial_step_3_multiple_commands() {
         // Step 3 from tutorial - counter with add and reset
         #[derive(Debug, Clone, PartialEq)]
@@ -1822,12 +1965,21 @@ mod tests {
         }
 
         impl BoundedCounter {
-            fn new() -> Self { Self { value: 0, max_value: 100 } }
-            fn can_add(&self, amount: i32) -> bool { self.value + amount <= self.max_value }
+            fn new() -> Self {
+                Self {
+                    value: 0,
+                    max_value: 100,
+                }
+            }
+            fn can_add(&self, amount: i32) -> bool {
+                self.value + amount <= self.max_value
+            }
         }
 
         #[derive(Clone, Debug)]
-        struct AddInput { amount: i32 }
+        struct AddInput {
+            amount: i32,
+        }
 
         impl std::fmt::Display for AddInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1845,7 +1997,7 @@ mod tests {
         }
 
         let mut generator = ActionGenerator::new();
-        
+
         // Add command
         let add_cmd: Command<AddInput, i32, BoundedCounter, i32> = Command::new(
             "add".to_string(),
@@ -1855,7 +2007,9 @@ mod tests {
                     let max_add = std::cmp::min(remaining, 10);
                     Some(Gen::new(move |_size, seed| {
                         let (amount, _) = seed.next_bounded(max_add as u64);
-                        crate::tree::Tree::singleton(AddInput { amount: amount as i32 + 1 })
+                        crate::tree::Tree::singleton(AddInput {
+                            amount: amount as i32 + 1,
+                        })
                     }))
                 } else {
                     None
@@ -1872,7 +2026,7 @@ mod tests {
                 Ok(())
             }
         });
-        
+
         // Reset command
         let reset_cmd: Command<ResetInput, i32, BoundedCounter, i32> = Command::new(
             "reset".to_string(),
@@ -1897,18 +2051,18 @@ mod tests {
                 Ok(())
             }
         });
-        
+
         generator.add_command(add_cmd);
         generator.add_command(reset_cmd);
-        
+
         let initial = BoundedCounter::new();
         let test = generator.generate_sequential(initial.clone(), 15);
-        
+
         println!("Tutorial Step 3 operations:");
         for (i, action) in test.actions.iter().enumerate() {
             println!("  {}: {}", i + 1, action.display_action());
         }
-        
+
         let result = execute_sequential(initial, test);
         assert!(result.is_ok());
         println!("✓ Tutorial Step 3 works!");
@@ -1932,7 +2086,7 @@ mod tests {
         }
 
         let mut generator = ActionGenerator::new();
-        
+
         let unlock_cmd: Command<UnlockInput, bool, LockedState, bool> = Command::new(
             "unlock".to_string(),
             |state: &LockedState| {
@@ -1944,19 +2098,19 @@ mod tests {
             },
             |_input: UnlockInput| true,
         );
-        
+
         generator.add_command(unlock_cmd);
-        
+
         // State where no commands are available
         let locked_state = LockedState { locked: true };
         let sequential = generator.generate_sequential(locked_state.clone(), 10);
-        
+
         // Should handle gracefully - generate empty sequence, not panic
         assert_eq!(sequential.actions.len(), 0);
-        
+
         let result = execute_sequential(locked_state, sequential);
         assert!(result.is_ok()); // Empty sequence should succeed
-        
+
         println!("✓ Handled edge case: no available commands");
     }
 
@@ -1969,7 +2123,9 @@ mod tests {
         }
 
         #[derive(Clone, Debug)]
-        struct AddInput { amount: i32 }
+        struct AddInput {
+            amount: i32,
+        }
 
         impl std::fmt::Display for AddInput {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1978,34 +2134,38 @@ mod tests {
         }
 
         let mut generator = ActionGenerator::new();
-        
+
         let add_cmd: Command<AddInput, i32, TestState, i32> = Command::new(
             "add".to_string(),
             |_state: &TestState| Some(Gen::constant(AddInput { amount: 5 })),
             |input: AddInput| input.amount,
         )
-        .with_update(|state: &mut TestState, input: &AddInput, _output: &Var<i32>| {
-            state.value += input.amount;
-        });
-        
+        .with_update(
+            |state: &mut TestState, input: &AddInput, _output: &Var<i32>| {
+                state.value += input.amount;
+            },
+        );
+
         generator.add_command(add_cmd);
-        
+
         let initial_state = TestState { value: 0 };
-        
+
         // Generate a sequence - this exercises the generation phase state updates
         let sequential = generator.generate_sequential(initial_state.clone(), 3);
-        
-        // Execute the sequence - this exercises execution phase state updates  
+
+        // Execute the sequence - this exercises execution phase state updates
         let mut execution_state = initial_state.clone();
         let mut env = Environment::new();
-        
+
         for action in sequential.actions {
-            action.execute_action(&mut execution_state, &mut env).unwrap();
+            action
+                .execute_action(&mut execution_state, &mut env)
+                .unwrap();
         }
-        
+
         // Both should result in same final state: 0 + 5 + 5 + 5 = 15
         assert_eq!(execution_state.value, 15);
-        
+
         println!("✓ State consistency maintained between generation and execution phases");
     }
 
@@ -2035,9 +2195,11 @@ mod tests {
             |_state: &Counter| Some(Gen::constant(IncrementInput { amount: 1 })),
             |input: IncrementInput| input.amount,
         )
-        .with_update(|state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
-            state.value += input.amount;
-        });
+        .with_update(
+            |state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
+                state.value += input.amount;
+            },
+        );
 
         generator.add_command(increment_cmd);
 
@@ -2056,10 +2218,13 @@ mod tests {
 
         match &result {
             Ok(()) => println!("✓ Parallel execution with linearizability checking passed!"),
-            Err(e) => println!("✗ Parallel execution failed: {}", e),
+            Err(e) => println!("✗ Parallel execution failed: {e}"),
         }
 
-        assert!(result.is_ok(), "Parallel execution should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Parallel execution should succeed: {result:?}"
+        );
     }
 
     #[test]
@@ -2088,9 +2253,11 @@ mod tests {
             |_state: &Counter| Some(Gen::constant(IncrementInput { amount: 1 })),
             |input: IncrementInput| input.amount,
         )
-        .with_update(|state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
-            state.value += input.amount;
-        });
+        .with_update(
+            |state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
+                state.value += input.amount;
+            },
+        );
 
         generator.add_command(increment_cmd);
 
@@ -2106,7 +2273,10 @@ mod tests {
 
         let result = execute_parallel(initial, parallel);
 
-        assert!(result.is_ok(), "Parallel execution with prefix should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Parallel execution with prefix should succeed: {result:?}"
+        );
         println!("✓ Parallel execution with prefix passed!");
     }
 
@@ -2136,9 +2306,11 @@ mod tests {
             |_state: &Counter| Some(Gen::constant(IncrementInput { amount: 1 })),
             |input: IncrementInput| input.amount,
         )
-        .with_update(|state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
-            state.value += input.amount;
-        });
+        .with_update(
+            |state: &mut Counter, input: &IncrementInput, _output: &Var<i32>| {
+                state.value += input.amount;
+            },
+        );
 
         generator.add_command(increment_cmd);
 
@@ -2173,7 +2345,10 @@ mod tests {
 
         let result = execute_parallel(initial, parallel);
 
-        assert!(result.is_ok(), "Unequal branches should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Unequal branches should succeed: {result:?}"
+        );
         println!("✓ Unequal branches test passed!");
     }
 
@@ -2194,7 +2369,7 @@ mod tests {
 
         let result = execute_parallel(initial, parallel);
 
-        assert!(result.is_ok(), "Empty branches should succeed: {:?}", result);
+        assert!(result.is_ok(), "Empty branches should succeed: {result:?}");
         println!("✓ Empty branches test passed!");
     }
 
@@ -2209,22 +2384,37 @@ mod tests {
         println!("Generated {} interleavings", interleavings.len());
 
         // Should be C(4, 2) = 6 interleavings
-        assert_eq!(interleavings.len(), 6, "Should generate 6 interleavings for (2,2)");
+        assert_eq!(
+            interleavings.len(),
+            6,
+            "Should generate 6 interleavings for (2,2)"
+        );
 
         // Check each interleaving has exactly 4 elements
         for (i, interleaving) in interleavings.iter().enumerate() {
             assert_eq!(
                 interleaving.len(),
                 4,
-                "Interleaving {} should have 4 elements",
-                i
+                "Interleaving {i} should have 4 elements"
             );
         }
 
         // Test edge cases
-        assert_eq!(interleave_indices(0, 0).len(), 1, "Empty should give 1 interleaving");
-        assert_eq!(interleave_indices(1, 0).len(), 1, "One branch empty should give 1 interleaving");
-        assert_eq!(interleave_indices(0, 1).len(), 1, "One branch empty should give 1 interleaving");
+        assert_eq!(
+            interleave_indices(0, 0).len(),
+            1,
+            "Empty should give 1 interleaving"
+        );
+        assert_eq!(
+            interleave_indices(1, 0).len(),
+            1,
+            "One branch empty should give 1 interleaving"
+        );
+        assert_eq!(
+            interleave_indices(0, 1).len(),
+            1,
+            "One branch empty should give 1 interleaving"
+        );
 
         println!("✓ Interleaving generation correctness verified!");
     }

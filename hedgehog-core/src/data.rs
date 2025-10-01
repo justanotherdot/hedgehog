@@ -86,7 +86,7 @@ impl Seed {
     /// Generate a bounded random value [0, bound).
     pub fn next_bounded(self, bound: u64) -> (u64, Self) {
         let (value, new_seed) = self.next_u64();
-        ((value as u128 * bound as u128 >> 64) as u64, new_seed)
+        (((value as u128 * bound as u128) >> 64) as u64, new_seed)
     }
 
     /// Generate a random bool.

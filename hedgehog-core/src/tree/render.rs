@@ -23,9 +23,9 @@ where
         result.push_str(&format!("{}\n", self.value));
 
         let child_prefix = if is_last {
-            format!("{}    ", prefix)
+            format!("{prefix}    ")
         } else {
-            format!("{}│   ", prefix)
+            format!("{prefix}│   ")
         };
 
         for (i, child) in self.children.iter().enumerate() {
@@ -54,7 +54,7 @@ where
         if shrinks.is_empty() {
             format!("{} (no shrinks)", self.value)
         } else {
-            let shrink_strs: Vec<String> = shrinks.iter().map(|v| format!("{}", v)).collect();
+            let shrink_strs: Vec<String> = shrinks.iter().map(|v| format!("{v}")).collect();
             format!("{} → [{}]", self.value, shrink_strs.join(", "))
         }
     }

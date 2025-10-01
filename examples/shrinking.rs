@@ -16,12 +16,9 @@ fn main() {
             shrinks_performed,
             ..
         } => {
-            println!(
-                "Integer shrinking worked: {}, shrinks: {}",
-                counterexample, shrinks_performed
-            );
+            println!("Integer shrinking worked: {counterexample}, shrinks: {shrinks_performed}");
         }
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
     println!();
 
@@ -35,12 +32,9 @@ fn main() {
             shrinks_performed,
             ..
         } => {
-            println!(
-                "String shrinking worked: '{}', shrinks: {}",
-                counterexample, shrinks_performed
-            );
+            println!("String shrinking worked: '{counterexample}', shrinks: {shrinks_performed}");
         }
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
     println!();
 
@@ -54,12 +48,9 @@ fn main() {
             shrinks_performed,
             ..
         } => {
-            println!(
-                "Vector shrinking worked: {:?}, shrinks: {}",
-                counterexample, shrinks_performed
-            );
+            println!("Vector shrinking worked: {counterexample:?}, shrinks: {shrinks_performed}");
         }
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
     println!();
 
@@ -73,12 +64,9 @@ fn main() {
             shrinks_performed,
             ..
         } => {
-            println!(
-                "Option shrinking worked: {:?}, shrinks: {}",
-                counterexample, shrinks_performed
-            );
+            println!("Option shrinking worked: {counterexample:?}, shrinks: {shrinks_performed}");
         }
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
     println!();
 
@@ -89,7 +77,7 @@ fn main() {
         Gen::<String>::ascii_alpha(),
     );
     let result_prop = for_all(result_gen, |r: &std::result::Result<i32, String>| {
-        matches!(r, Err(_)) // Will fail on Ok values, showing shrinking
+        r.is_err() // Will fail on Ok values, showing shrinking
     });
     match result_prop.run(&Config::default().with_tests(50)) {
         TestResult::Fail {
@@ -97,12 +85,9 @@ fn main() {
             shrinks_performed,
             ..
         } => {
-            println!(
-                "Result shrinking worked: {:?}, shrinks: {}",
-                counterexample, shrinks_performed
-            );
+            println!("Result shrinking worked: {counterexample:?}, shrinks: {shrinks_performed}");
         }
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
     println!();
 
@@ -121,11 +106,10 @@ fn main() {
             ..
         } => {
             println!(
-                "Complex nested shrinking worked: {:?}, shrinks: {}",
-                counterexample, shrinks_performed
+                "Complex nested shrinking worked: {counterexample:?}, shrinks: {shrinks_performed}"
             );
         }
-        result => println!("Unexpected result: {:?}", result),
+        result => println!("Unexpected result: {result:?}"),
     }
 
     println!();

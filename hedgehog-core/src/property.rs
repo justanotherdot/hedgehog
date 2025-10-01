@@ -25,6 +25,12 @@ pub struct TestStatistics {
     pub total_tests: usize,
 }
 
+impl Default for TestStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestStatistics {
     pub fn new() -> Self {
         TestStatistics {
@@ -41,18 +47,21 @@ impl TestStatistics {
     pub fn record_collection(&mut self, name: &str, value: f64) {
         self.collections
             .entry(name.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(value);
     }
 }
+
+type ClassificationFn<T> = Box<dyn Fn(&T) -> bool>;
+type CollectionFn<T> = Box<dyn Fn(&T) -> f64>;
 
 /// A property that can be tested with generated inputs.
 pub struct Property<T> {
     generator: Gen<T>,
     test_function: Box<dyn Fn(&T) -> TestResult>,
     variable_name: Option<String>,
-    classifications: Vec<(String, Box<dyn Fn(&T) -> bool>)>,
-    collections: Vec<(String, Box<dyn Fn(&T) -> f64>)>,
+    classifications: Vec<(String, ClassificationFn<T>)>,
+    collections: Vec<(String, CollectionFn<T>)>,
     examples: Vec<T>,
     example_strategy: ExampleStrategy,
 }
@@ -91,7 +100,7 @@ where
                 }
             } else {
                 TestResult::Fail {
-                    counterexample: format!("{:?}", input),
+                    counterexample: format!("{input:?}"),
                     tests_run: 0,
                     shrinks_performed: 0,
                     property_name: None,
@@ -117,7 +126,7 @@ where
                 }
             } else {
                 TestResult::Fail {
-                    counterexample: format!("{:?}", input),
+                    counterexample: format!("{input:?}"),
                     tests_run: 0,
                     shrinks_performed: 0,
                     property_name: None,
@@ -153,7 +162,7 @@ where
 
     /// Test explicit examples with configurable integration strategy.
     ///
-    /// This ensures critical edge cases are tested while getting broad coverage 
+    /// This ensures critical edge cases are tested while getting broad coverage
     /// from property-based testing. The strategy determines how examples are mixed
     /// with generated values.
     ///
@@ -161,15 +170,15 @@ where
     /// ```rust
     /// use hedgehog_core::*;
     /// use hedgehog_core::property::ExampleStrategy;
-    /// 
+    ///
     /// // Examples tested first (default)
     /// let prop1 = for_all(Gen::int_range(1, 100), |&n| n > 0)
     ///     .with_examples(vec![1, 50, 100]);
-    /// 
+    ///
     /// // Mixed randomly throughout testing  
     /// let prop2 = for_all(Gen::int_range(1, 100), |&n| n > 0)
     ///     .with_examples_strategy(vec![1, 50, 100], ExampleStrategy::Mixed);
-    /// 
+    ///
     /// // Only test examples for first 5 tests, then generate
     /// let prop3 = for_all(Gen::int_range(1, 100), |&n| n > 0)
     ///     .with_examples_strategy(vec![1, 50, 100], ExampleStrategy::ExamplesUpTo(5));
@@ -359,18 +368,14 @@ where
     }
 
     /// Attempt to find a smaller failing case through shrinking.
-    fn shrink_failure<'a>(
-        &self,
-        tree: &'a Tree<T>,
-        config: &Config,
-    ) -> (Option<String>, Vec<ShrinkStep>) {
+    fn shrink_failure(&self, tree: &Tree<T>, config: &Config) -> (Option<String>, Vec<ShrinkStep>) {
         let mut shrink_steps = Vec::new();
         let mut current_failure = &tree.value;
         let mut shrink_count = 0;
 
         // Add the original failing value as step 0
         shrink_steps.push(ShrinkStep {
-            counterexample: format!("{:?}", current_failure),
+            counterexample: format!("{current_failure:?}"),
             step: 0,
             variable_name: self.variable_name.clone(),
         });
@@ -388,7 +393,7 @@ where
 
                     // Record this shrinking step
                     shrink_steps.push(ShrinkStep {
-                        counterexample: format!("{:?}", shrink_value),
+                        counterexample: format!("{shrink_value:?}"),
                         step: shrink_count,
                         variable_name: self.variable_name.clone(),
                     });
@@ -400,7 +405,7 @@ where
         }
 
         if shrink_count > 0 {
-            (Some(format!("{:?}", current_failure)), shrink_steps)
+            (Some(format!("{current_failure:?}")), shrink_steps)
         } else {
             (None, shrink_steps)
         }
@@ -441,12 +446,13 @@ mod tests {
     #[test]
     fn test_property_success() {
         let gen = Gen::bool();
-        let prop = for_all(gen, |&b| b == true || b == false);
+        #[allow(clippy::nonminimal_bool)]
+        let prop = for_all(gen, |&b| b || !b);
         let config = Config::default();
 
         match prop.run(&config) {
             TestResult::Pass { .. } => (),
-            other => panic!("Expected success, got: {:?}", other),
+            other => panic!("Expected success, got: {other:?}"),
         }
     }
 
@@ -459,7 +465,7 @@ mod tests {
 
         match prop.run(&config) {
             TestResult::Fail { .. } => (),
-            other => panic!("Expected failure, got: {:?}", other),
+            other => panic!("Expected failure, got: {other:?}"),
         }
     }
 
@@ -467,15 +473,12 @@ mod tests {
     fn test_boolean_generator_reliability() {
         // Test that boolean generator with SplitMix64 produces both true and false
         let gen = Gen::bool();
-        let prop = for_all(gen, |&b| b == true); // Will fail on false
+        let prop = for_all(gen, |&b| b); // Will fail on false
         let config = Config::default().with_tests(50);
 
         match prop.run(&config) {
             TestResult::Fail { .. } => (), // Expected - should find false values
-            other => panic!(
-                "Boolean generator should produce both true and false, got: {:?}",
-                other
-            ),
+            other => panic!("Boolean generator should produce both true and false, got: {other:?}"),
         }
     }
 
@@ -534,7 +537,7 @@ mod tests {
         };
 
         // Capture the failure output for regression testing
-        let output = format!("{}", result);
+        let output = format!("{result}");
         archetype::snap("enhanced_failure_reporting", output);
     }
 
@@ -572,7 +575,7 @@ mod tests {
             ],
         };
 
-        let formatted_output = format!("{}", expected_result);
+        let formatted_output = format!("{expected_result}");
         archetype::snap("variable_name_failure_reporting", formatted_output);
     }
 
@@ -592,10 +595,10 @@ mod tests {
         // Capture the success output for regression testing
         match result {
             TestResult::Pass { .. } => {
-                let output = format!("{}", result);
+                let output = format!("{result}");
                 archetype::snap("enhanced_success_reporting", output);
             }
-            other => panic!("Expected success, got: {:?}", other),
+            other => panic!("Expected success, got: {other:?}"),
         }
     }
 
@@ -603,7 +606,7 @@ mod tests {
     fn test_property_classification() {
         // Test that property classification works correctly
         let gen = Gen::int_range(-10, 10);
-        let prop = for_all(gen, |&x| x >= -10 && x <= 10) // Always passes
+        let prop = for_all(gen, |&x| (-10..=10).contains(&x)) // Always passes
             .classify("negative", |&x| x < 0)
             .classify("zero", |&x| x == 0)
             .classify("positive", |&x| x > 0)
@@ -630,12 +633,12 @@ mod tests {
 
                 // Values should be in range
                 for &value in values {
-                    assert!(value >= -10.0 && value <= 10.0);
+                    assert!((-10.0..=10.0).contains(&value));
                 }
 
                 assert_eq!(statistics.total_tests, 50);
             }
-            other => panic!("Expected PassWithStatistics, got: {:?}", other),
+            other => panic!("Expected PassWithStatistics, got: {other:?}"),
         }
     }
 
@@ -662,11 +665,11 @@ mod tests {
                 assert!(statistics.collections.contains_key("normal"));
 
                 // The output should format without panicking
-                let output = format!("{}", result);
+                let output = format!("{result}");
                 assert!(output.contains("normal"));
                 // Problematic collection might not appear if all values are NaN/infinite
             }
-            other => panic!("Expected PassWithStatistics, got: {:?}", other),
+            other => panic!("Expected PassWithStatistics, got: {other:?}"),
         }
     }
 
@@ -695,7 +698,7 @@ mod tests {
             statistics,
         };
 
-        let output = format!("{}", result);
+        let output = format!("{result}");
         archetype::snap("classification_output", output);
     }
 
@@ -704,38 +707,40 @@ mod tests {
         // Test that examples are tested first, then random generation
         let examples = vec![1, 2, 3];
         let gen = Gen::int_range(10, 20); // Different range so we can detect examples
-        let prop = for_all(gen, |&x| x > 0)
-            .with_examples(examples.clone());
+        let prop = for_all(gen, |&x| x > 0).with_examples(examples.clone());
 
         // Test with very few random tests to ensure examples are used first
         let config = Config::default().with_tests(examples.len() + 2);
-        
+
         // This should pass since all our examples and generated values are positive
         match prop.run(&config) {
             TestResult::Pass { tests_run, .. } => {
                 assert_eq!(tests_run, examples.len() + 2);
             }
-            result => panic!("Expected pass, got: {:?}", result),
+            result => panic!("Expected pass, got: {result:?}"),
         }
     }
 
-    #[test]  
+    #[test]
     fn test_examples_first_failure() {
         // Test that example failure is caught immediately
         let examples = vec![1, -1, 3]; // -1 should fail
         let gen = Gen::int_range(10, 20);
-        let prop = for_all(gen, |&x| x > 0)
-            .with_examples(examples);
+        let prop = for_all(gen, |&x| x > 0).with_examples(examples);
 
         let config = Config::default().with_tests(10);
-        
+
         match prop.run(&config) {
-            TestResult::Fail { counterexample, tests_run, .. } => {
-                // Should fail on the second example (-1)  
+            TestResult::Fail {
+                counterexample,
+                tests_run,
+                ..
+            } => {
+                // Should fail on the second example (-1)
                 assert_eq!(counterexample, "-1");
                 assert_eq!(tests_run, 2); // First example passes, second fails
             }
-            result => panic!("Expected failure, got: {:?}", result),
+            result => panic!("Expected failure, got: {result:?}"),
         }
     }
 
@@ -744,17 +749,17 @@ mod tests {
         // Test mixed strategy distributes examples throughout
         let examples = vec![1, 2, 3];
         let gen = Gen::int_range(10, 20);
-        let prop = for_all(gen, |&x| x > 0)
-            .with_examples_strategy(examples, ExampleStrategy::Mixed);
+        let prop =
+            for_all(gen, |&x| x > 0).with_examples_strategy(examples, ExampleStrategy::Mixed);
 
         let config = Config::default().with_tests(20);
-        
+
         // Should pass - both examples and generated values are positive
         match prop.run(&config) {
             TestResult::Pass { tests_run, .. } => {
                 assert_eq!(tests_run, 20);
             }
-            result => panic!("Expected pass, got: {:?}", result),
+            result => panic!("Expected pass, got: {result:?}"),
         }
     }
 
@@ -767,14 +772,18 @@ mod tests {
             .with_examples_strategy(examples, ExampleStrategy::GeneratedFirst);
 
         let config = Config::default().with_tests(20);
-        
+
         // Should eventually fail when it gets to the example
         match prop.run(&config) {
-            TestResult::Fail { counterexample, tests_run, .. } => {
+            TestResult::Fail {
+                counterexample,
+                tests_run,
+                ..
+            } => {
                 assert_eq!(counterexample, "-1");
                 assert!(tests_run > 1); // Should have done some generation first
             }
-            result => panic!("Expected failure, got: {:?}", result),
+            result => panic!("Expected failure, got: {result:?}"),
         }
     }
 
@@ -787,13 +796,13 @@ mod tests {
             .with_examples_strategy(examples, ExampleStrategy::ExamplesUpTo(3));
 
         let config = Config::default().with_tests(10);
-        
+
         // Should pass - examples used only for first 3 tests
         match prop.run(&config) {
             TestResult::Pass { tests_run, .. } => {
                 assert_eq!(tests_run, 10);
             }
-            result => panic!("Expected pass, got: {:?}", result),
+            result => panic!("Expected pass, got: {result:?}"),
         }
     }
 
@@ -802,16 +811,15 @@ mod tests {
         // Test that empty examples work normally
         let examples = vec![];
         let gen = Gen::int_range(1, 10);
-        let prop = for_all(gen, |&x| x > 0)
-            .with_examples(examples);
+        let prop = for_all(gen, |&x| x > 0).with_examples(examples);
 
         let config = Config::default().with_tests(5);
-        
+
         match prop.run(&config) {
             TestResult::Pass { tests_run, .. } => {
                 assert_eq!(tests_run, 5);
             }
-            result => panic!("Expected pass, got: {:?}", result),
+            result => panic!("Expected pass, got: {result:?}"),
         }
     }
 
@@ -820,20 +828,23 @@ mod tests {
         // Test that examples work with named variables
         let examples = vec![0]; // Will fail the > 0 test
         let gen = Gen::int_range(1, 10);
-        let prop = for_all_named(gen, "value", |&x| x > 0)
-            .with_examples(examples);
+        let prop = for_all_named(gen, "value", |&x| x > 0).with_examples(examples);
 
         let config = Config::default().with_tests(5);
-        
+
         match prop.run(&config) {
-            TestResult::Fail { counterexample, shrink_steps, .. } => {
+            TestResult::Fail {
+                counterexample,
+                shrink_steps,
+                ..
+            } => {
                 assert_eq!(counterexample, "0");
                 // Should have variable name in shrink steps
                 if !shrink_steps.is_empty() {
                     assert_eq!(shrink_steps[0].variable_name, Some("value".to_string()));
                 }
             }
-            result => panic!("Expected failure, got: {:?}", result),
+            result => panic!("Expected failure, got: {result:?}"),
         }
     }
 }

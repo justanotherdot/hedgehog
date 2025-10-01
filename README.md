@@ -318,11 +318,10 @@ fn prop_find_slow_inputs() {
 
 ## Documentation
 
-- **[API Guide](docs/api-guide.md)** - Comprehensive API reference and examples
-- **[Distribution Shaping](docs/distribution-shaping.md)** - Control probability distributions for realistic test data
-- **[Variable Name Tracking](docs/variable-name-tracking.md)** - Enhanced failure reporting with named inputs
-- **[Derive Macros](docs/derive-macros.md)** - Automatic generator creation for custom types
-- **[Roadmap](docs/roadmap.md)** - Development plan and project status
+- **[Getting Started](docs/guides/getting-started.md)** - Installation and first steps
+- **[Documentation Overview](docs/overview.md)** - Complete documentation index
+- **[API Reference](docs/guides/api.md)** - Comprehensive API guide
+- **[Contributing](docs/contributing/roadmap.md)** - Project roadmap and how to contribute
 
 ## Examples
 
@@ -369,22 +368,11 @@ Jacob passed away unexpectedly on April 9th, 2021. His absence is deeply felt, b
 
 ## Project Status
 
-This is a work-in-progress implementation. See [docs/roadmap.md](docs/roadmap.md) for the development plan.
-
-
-## Documentation
-
-- [Property Classification Guide](docs/property-classification.md) - Inspecting test data distribution and statistics
-- [Targeted Testing Comparison](docs/targeted-testing-comparison.md) - Comparison with PROPER's approach and implementation choices
-- [Targeted Testing Effectiveness Analysis](docs/targeted-testing-effectiveness-analysis.md) - Detailed analysis of systematic search behavior and estimated efficiency gains
-- [Targeted Testing Future Improvements](docs/targeted-testing-future-improvements.md) - Roadmap for extending targeted testing capabilities
-- [Implementation Plan](docs/implementation-plan.md) - Detailed implementation roadmap
-- [Roadmap](docs/roadmap.md) - Project status and future plans
-- [Ideas](docs/ideas.md) - Comprehensive feature survey from other property testing libraries
+This is a work-in-progress implementation. See [docs/contributing/roadmap.md](docs/contributing/roadmap.md) for the development plan and [docs/contributing/release.md](docs/contributing/release.md) for the release process.
 
 ## Contributing
 
-Contributions are welcome! Please see the [roadmap](docs/roadmap.md) for planned features and current progress.
+Contributions are welcome! Please see the [roadmap](docs/contributing/roadmap.md) for planned features and current progress.
 
 ## License
 
