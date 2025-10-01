@@ -15,8 +15,8 @@ default = []
 derive = ["dep:hedgehog-derive"]
 
 [dependencies]
-hedgehog-core = { path = "../hedgehog-core" }
-hedgehog-derive = { path = "../hedgehog-derive", optional = true }
+hedgehog-core = { version = "0.1.0", path = "../hedgehog-core" }
+hedgehog-derive = { version = "0.1.0", path = "../hedgehog-derive", optional = true }
 
 [[example]]
 name = "basic"
