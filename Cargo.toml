@@ -18,6 +18,10 @@ keywords = ["testing", "property", "quickcheck", "fuzzing"]
 categories = ["development-tools::testing"]
 
 [workspace.dependencies]
+# Workspace crates
+hedgehog-core = { version = "0.1.0", path = "hedgehog-core" }
+hedgehog-derive = { version = "0.1.0", path = "hedgehog-derive" }
+
 # Core dependencies that multiple crates might need
 rand = "0.8"
 thiserror = "1.0"
